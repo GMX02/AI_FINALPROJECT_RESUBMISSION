@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
     QComboBox, QGridLayout, QScrollArea
 )
 from PyQt5.QtGui import QIcon, QPixmap, QImage, QColor, QPainter, QPen, QLinearGradient
-from PyQt5.QtCore import Qt, QTimer, QRect, QPoint, QSize, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QRect, QPoint, QSize, QThread, pyqtSignal, QPropertyAnimation, QEasingCurve
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -107,20 +107,22 @@ class TimelineWidget(QWidget):
         self.update()
 
     def mousePressEvent(self, event):
-        current_time = event.timestamp()
         if event.button() == Qt.LeftButton:
             if self.hovered_marker is not None:
                 # Check for double click (within 500ms)
-                if current_time - self.last_click_time < 500:
+                if event.timestamp() - self.last_click_time < 500:
                     # Show metadata dialog
                     dialog = GunshotMetadataDialog(self.hovered_marker, self)
                     dialog.exec_()
-                self.last_click_time = current_time
+                self.last_click_time = event.timestamp()
                 return
             self.dragging = True
             x = event.x()
             self.cursor_position = (x / self.width()) * self.duration
-            self.parent().parent().parent().scrub_to_position(self.cursor_position)
+            # Get the main window through the widget hierarchy
+            main_window = self.window()
+            if hasattr(main_window, 'scrub_to_position'):
+                main_window.scrub_to_position(self.cursor_position)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -130,18 +132,10 @@ class TimelineWidget(QWidget):
         if self.dragging:
             x = event.x()
             self.cursor_position = (x / self.width()) * self.duration
-            self.parent().parent().parent().scrub_to_position(self.cursor_position)
-        
-        # Check for marker hover
-        self.hovered_marker = None
-        if self.audio_data is not None:
-            x = event.x()
-            width = self.width()
-            for marker in self.gunshot_markers:
-                marker_x = int((marker['time'] / self.duration) * width)
-                if abs(x - marker_x) < 10:  # 10 pixel hover radius
-                    self.hovered_marker = marker
-                    break
+            # Get the main window through the widget hierarchy
+            main_window = self.window()
+            if hasattr(main_window, 'scrub_to_position'):
+                main_window.scrub_to_position(self.cursor_position)
         self.update()
 
     def paintEvent(self, event):
@@ -249,11 +243,109 @@ class TimelineWidget(QWidget):
             return len(self.audio_data) / self.sample_rate
         return 0
 
+class LoadingSpinner(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(50, 50)
+        self.angle = 0
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_angle)
+        self.timer.start(50)  # Update every 50ms
+
+    def update_angle(self):
+        self.angle = (self.angle + 10) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Draw spinner
+        pen = QPen(QColor(100, 180, 255), 3)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        
+        rect = QRect(5, 5, 40, 40)
+        painter.drawArc(rect, self.angle * 16, 270 * 16)  # 270 degrees arc
+
+class PopupWindow(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Processing")
+        self.setFixedSize(300, 150)
+        self.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+        self.setModal(True)  # Make it modal to block parent window
+        
+        # Set dark theme
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #2b2b2b;
+                color: #cccccc;
+            }
+            QLabel {
+                color: #cccccc;
+                font-size: 14px;
+            }
+        """)
+        
+        # Create layout
+        layout = QVBoxLayout()
+        layout.setAlignment(Qt.AlignCenter)
+        
+        # Add spinner
+        self.spinner = LoadingSpinner()
+        layout.addWidget(self.spinner, 0, Qt.AlignCenter)
+        
+        # Add message
+        self.message_label = QLabel("Generating spectrogram...")
+        self.message_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.message_label)
+        
+        self.setLayout(layout)
+        
+        # Add fade-in animation
+        self.animation = QPropertyAnimation(self, b"windowOpacity")
+        self.animation.setDuration(200)  # 200ms
+        self.animation.setStartValue(0.0)
+        self.animation.setEndValue(1.0)
+        self.animation.setEasingCurve(QEasingCurve.InOutQuad)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.animation.start()
+
+    def closeEvent(self, event):
+        self.animation.setDirection(QPropertyAnimation.Backward)
+        self.animation.start()
+        event.accept()
+
+class ProcessingThread(QThread):
+    finished = pyqtSignal(object)  # Changed to emit result
+    error = pyqtSignal(str)
+    
+    def __init__(self, task_func, *args, **kwargs):
+        super().__init__()
+        self.task_func = task_func
+        self.args = args
+        self.kwargs = kwargs
+        
+    def run(self):
+        try:
+            result = self.task_func(*self.args, **self.kwargs)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
 class GunshotDetectionApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Gunshot Audio Detection Platform")
-        self.setMinimumSize(1200, 1000)  # Increased height for new section
+        self.setMinimumSize(1200, 1000)
+
+        # Initialize image storage
+        self.firearm_images = {}
+        self.bullet_images = {}
+        self.load_images()
 
         self.current_file = None
         self.duration = 0
@@ -569,54 +661,77 @@ class GunshotDetectionApp(QMainWindow):
         db_action.triggered.connect(self.query_database)
         file_menu.addAction(db_action)
 
-    def load_file(self):
-        fname, _ = QFileDialog.getOpenFileName(self, 'Open File', os.getcwd(), "Audio Files (*.wav *.mp3)")
-        if fname:
-            # Show loading dialog
-            progress = QProgressDialog("Generating timeline visualization...", None, 0, 100, self)
-            progress.setWindowModality(Qt.WindowModal)
-            progress.setWindowTitle("Loading")
-            progress.setCancelButton(None)  # Remove cancel button
-            progress.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
-            progress.setStyleSheet("""
-                QProgressDialog {
-                    background-color: #2b2b2b;
-                    color: #cccccc;
-                }
-                QProgressBar {
-                    border: 1px solid #4b4b4b;
-                    border-radius: 3px;
-                    background-color: #2b2b2b;
-                    text-align: center;
-                }
-                QProgressBar::chunk {
-                    background-color: #6b6b6b;
-                    border-radius: 2px;
-                }
-            """)
-            progress.setMinimumDuration(0)  # Show immediately
-            progress.setValue(0)
-            
-            self.current_file = fname
-            y, sr = librosa.load(fname, sr=None)
-            self.audio_data = y
-            self.duration = librosa.get_duration(y=y, sr=sr)
-            self.sample_rate = sr
+    def show_processing_popup(self, message="Processing..."):
+        self.popup = PopupWindow(self)
+        self.popup.message_label.setText(message)
+        self.popup.show()
 
-            info = get_audio_info(fname)
+    def process_with_popup(self, task_func, message="Processing...", *args, **kwargs):
+        # Show popup
+        self.show_processing_popup(message)
+        
+        # Create and start processing thread
+        self.processing_thread = ProcessingThread(task_func, *args, **kwargs)
+        self.processing_thread.finished.connect(self._handle_processing_result)
+        self.processing_thread.error.connect(self.handle_processing_error)
+        self.processing_thread.start()
+
+    def _handle_processing_result(self, result):
+        self.hide_processing_popup()
+        if result is not None:
+            # Update GUI in the main thread
+            self.current_file = result['filename']
+            self.audio_data = result['audio_data']
+            self.sample_rate = result['sample_rate']
+            self.duration = result['duration']
+
+            info = get_audio_info(result['filename'])
             self.file_info_label.setText(
-                f"<b>File:</b> {os.path.basename(fname)}<br>"
-                f"<b>Length:</b> {self.duration:.2f} sec<br>"
-                f"<b>Sample Rate:</b> {sr} Hz"
+                f"<b>File:</b> {os.path.basename(result['filename'])}<br>"
+                f"<b>Length:</b> {result['duration']:.2f} sec<br>"
+                f"<b>Sample Rate:</b> {result['sample_rate']} Hz"
             )
             
             # Create and start worker thread
-            self.worker = TimelineWorker(y, sr)
-            self.worker.progress.connect(progress.setValue)
-            self.worker.finished.connect(lambda y, sr: self.timeline_loaded(y, sr, progress))
+            self.worker = TimelineWorker(result['audio_data'], result['sample_rate'])
+            self.worker.progress.connect(lambda x: None)  # Progress updates can be handled here
+            self.worker.finished.connect(self.timeline_loaded)
             self.worker.start()
 
-    def timeline_loaded(self, y, sr, progress):
+    def hide_processing_popup(self):
+        if hasattr(self, 'popup'):
+            self.popup.close()
+
+    def handle_processing_error(self, error_message):
+        self.hide_processing_popup()
+        # You can add error handling here, like showing a message box
+        print(f"Processing error: {error_message}")
+
+    def load_file(self):
+        fname, _ = QFileDialog.getOpenFileName(self, 'Open File', os.getcwd(), "Audio Files (*.wav *.mp3)")
+        if fname:
+            # Show processing popup
+            self.process_with_popup(
+                self._load_file_task,
+                "Generating timeline visualization...",
+                fname
+            )
+
+    def _load_file_task(self, fname):
+        # This function runs in the background thread
+        # Only do non-GUI operations here
+        y, sr = librosa.load(fname, sr=None)
+        duration = librosa.get_duration(y=y, sr=sr)
+        
+        # Return the data to be processed in the main thread
+        return {
+            'filename': fname,
+            'audio_data': y,
+            'sample_rate': sr,
+            'duration': duration
+        }
+
+    def timeline_loaded(self, y, sr):
         self.timeline.set_audio_data(y, sr)
         self.scrub_slider.setEnabled(True)
         self.play_btn.setEnabled(True)
@@ -624,12 +739,9 @@ class GunshotDetectionApp(QMainWindow):
         self.detect_btn.setEnabled(True)
         self.locate_btn.setEnabled(True)
         self.run_all_btn.setEnabled(True)
-
+        
         # Update time display
         self.update_time_display(0)
-        
-        # Close progress dialog
-        progress.close()
 
     def update_visualization(self):
         if self.is_playing and self.current_stream:
@@ -785,26 +897,53 @@ class GunshotDetectionApp(QMainWindow):
         results = query_past_files()
         print("Queried database:", results)
 
+    def load_images(self):
+        # Create gui_files directory if it doesn't exist
+        os.makedirs("gui_files", exist_ok=True)
+        
+        # Define image paths
+        image_paths = {
+            'ar15': {
+                'firearm': 'gui_files/ar15.jpg',
+                'bullet': 'gui_files/ar15_bullet.jpg'
+            },
+            'pistol': {
+                'firearm': 'gui_files/pistol.jpg',
+                'bullet': 'gui_files/pistol_bullet.jpg'
+            },
+            'shotgun': {
+                'firearm': 'gui_files/shotgun.jpg',
+                'bullet': 'gui_files/shotgun_bullet.jpg'
+            }
+        }
+        
+        # Load images if they exist
+        for firearm_type, paths in image_paths.items():
+            if os.path.exists(paths['firearm']):
+                self.firearm_images[firearm_type] = QPixmap(paths['firearm'])
+            if os.path.exists(paths['bullet']):
+                self.bullet_images[firearm_type] = QPixmap(paths['bullet'])
+
     def analyze_firearm(self):
-        # Dummy analysis function
-        # In a real implementation, this would process the inputs and return actual results
-        firearm_path = "gui_files/ar15.jpg"  # Replace with actual path
-        bullet_path = "gui_files/bullet.jpg"  # Replace with actual path
+        # Get selected firearm type
+        selected_type = self.firearm_type.currentText().lower()
         
-        # Load and display images
-        if os.path.exists(firearm_path):
-            pixmap = QPixmap(firearm_path)
-            self.firearm_image.setPixmap(pixmap.scaled(200, 200, Qt.KeepAspectRatio))
-        
-        if os.path.exists(bullet_path):
-            pixmap = QPixmap(bullet_path)
-            self.bullet_image.setPixmap(pixmap.scaled(200, 200, Qt.KeepAspectRatio))
+        # Display images if available
+        if selected_type in self.firearm_images:
+            self.firearm_image.setPixmap(self.firearm_images[selected_type].scaled(200, 200, Qt.KeepAspectRatio))
+        else:
+            self.firearm_image.setText("No image available")
+            
+        if selected_type in self.bullet_images:
+            self.bullet_image.setPixmap(self.bullet_images[selected_type].scaled(200, 200, Qt.KeepAspectRatio))
+        else:
+            self.bullet_image.setText("No image available")
         
         # Update info
         self.firearm_info.setText(
-            f"Firearm: AR-15\n"
-            f"Caliber: 5.56mm\n"
-            f"Type: Rifle\n"
+            f"Firearm: {self.firearm_type.currentText()}\n"
+            f"Caliber: {self.caliber_input.text()}\n"
+            f"Type: {self.firearm_type.currentText()}\n"
             f"Distance: {self.distance_input.text()}m\n"
             f"Environment: {self.environment.currentText()}"
         )
