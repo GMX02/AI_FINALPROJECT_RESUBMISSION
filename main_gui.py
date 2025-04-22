@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QWidget, QGroupBox, QSlider, QFrame
 )
 from PyQt5.QtGui import QIcon, QPixmap, QImage, QColor, QPainter, QPen, QLinearGradient
-from PyQt5.QtCore import Qt, QTimer, QRect, QPoint
+from PyQt5.QtCore import Qt, QTimer, QRect, QPoint, QSize
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -221,8 +221,112 @@ class GunshotDetectionApp(QMainWindow):
         self.timeline = TimelineWidget()
         self.right_panel.addWidget(self.timeline)
 
-        # Controls layout
+        # Controls layout with modern styling
         controls_layout = QHBoxLayout()
+        controls_widget = QWidget()
+        controls_widget.setStyleSheet("""
+            QWidget {
+                background-color: #2b2b2b;
+                border-radius: 5px;
+                padding: 5px;
+            }
+            QPushButton {
+                background-color: #3b3b3b;
+                border: none;
+                border-radius: 3px;
+                padding: 5px;
+                min-width: 30px;
+                min-height: 30px;
+            }
+            QPushButton:hover {
+                background-color: #4b4b4b;
+            }
+            QPushButton:pressed {
+                background-color: #5b5b5b;
+            }
+            QSlider::groove:horizontal {
+                border: 1px solid #4b4b4b;
+                height: 4px;
+                background: #2b2b2b;
+                margin: 0px;
+                border-radius: 2px;
+            }
+            QSlider::handle:horizontal {
+                background: #6b6b6b;
+                border: none;
+                width: 18px;
+                margin: -8px 0;
+                border-radius: 9px;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #7b7b7b;
+            }
+        """)
+        
+        controls_layout.setContentsMargins(10, 5, 10, 5)
+        controls_widget.setLayout(controls_layout)
+        
+        # Play button with icon
+        self.play_btn = QPushButton()
+        self.play_btn.setEnabled(False)
+        self.play_btn.clicked.connect(self.toggle_playback)
+        
+        # Create play/pause icons
+        play_icon = QIcon()
+        play_icon.addFile("""
+            /* XPM */
+            static char *play_xpm[] = {
+            "16 16 2 1",
+            ". c None",
+            "# c #FFFFFF",
+            "................",
+            "....##..........",
+            "....###.........",
+            "....####........",
+            "....#####.......",
+            "....######......",
+            "....#######.....",
+            "....########....",
+            "....#######.....",
+            "....######......",
+            "....#####.......",
+            "....####........",
+            "....###.........",
+            "....##..........",
+            "................",
+            "................"};
+        """)
+        
+        pause_icon = QIcon()
+        pause_icon.addFile("""
+            /* XPM */
+            static char *pause_xpm[] = {
+            "16 16 2 1",
+            ". c None",
+            "# c #FFFFFF",
+            "................",
+            "....##...##.....",
+            "....##...##.....",
+            "....##...##.....",
+            "....##...##.....",
+            "....##...##.....",
+            "....##...##.....",
+            "....##...##.....",
+            "....##...##.....",
+            "....##...##.....",
+            "....##...##.....",
+            "....##...##.....",
+            "....##...##.....",
+            "....##...##.....",
+            "................",
+            "................"};
+        """)
+        
+        self.play_icon = play_icon
+        self.pause_icon = pause_icon
+        self.play_btn.setIcon(self.play_icon)
+        self.play_btn.setIconSize(QSize(20, 20))
+        controls_layout.addWidget(self.play_btn)
         
         self.scrub_slider = QSlider(Qt.Horizontal)
         self.scrub_slider.setRange(0, 1000)
@@ -230,12 +334,7 @@ class GunshotDetectionApp(QMainWindow):
         self.scrub_slider.sliderMoved.connect(self.scrub_audio)
         controls_layout.addWidget(self.scrub_slider)
 
-        self.play_btn = QPushButton("Play")
-        self.play_btn.setEnabled(False)
-        self.play_btn.clicked.connect(self.toggle_playback)
-        controls_layout.addWidget(self.play_btn)
-
-        self.right_panel.addLayout(controls_layout)
+        self.right_panel.addWidget(controls_widget)
 
         self.placeholder_text = QLabel("Load an audio file to begin.")
         self.placeholder_text.setAlignment(Qt.AlignCenter)
@@ -293,10 +392,24 @@ class GunshotDetectionApp(QMainWindow):
 
     def stop_playback(self):
         if self.current_stream:
-            self.current_stream.stop()
-        self.playback_timer.stop()
-        self.play_btn.setText("Play")
+            try:
+                self.current_stream.stop()
+                self.current_stream.close()
+            except:
+                pass
+            self.current_stream = None
+            
+        if hasattr(self, 'update_timer'):
+            self.update_timer.stop()
+            
+        self.play_btn.setIcon(self.play_icon)
         self.is_playing = False
+        
+        # Update final position
+        if self.audio_data is not None:
+            current_time = self.playback_position / self.sample_rate
+            self.timeline.set_cursor_position(current_time)
+            self.scrub_slider.setValue(int((current_time / self.duration) * 1000))
 
     def scrub_to_position(self, position):
         if self.audio_data is not None:
@@ -313,17 +426,56 @@ class GunshotDetectionApp(QMainWindow):
         else:
             if self.audio_data is not None:
                 start_sample = int((self.scrub_slider.value() / 1000.0) * len(self.audio_data))
-                data_to_play = self.audio_data[start_sample:]
+                self.playback_position = start_sample
                 
-                self.current_stream = sd.OutputStream(
-                    samplerate=self.sample_rate,
-                    channels=1
-                )
-                self.current_stream.start()
-                self.current_stream.write(data_to_play)
+                try:
+                    # Create a non-blocking stream
+                    self.current_stream = sd.OutputStream(
+                        samplerate=self.sample_rate,
+                        channels=1,
+                        blocksize=1024,
+                        dtype='float32'
+                    )
+                    self.current_stream.start()
+                    
+                    # Start the update timer
+                    self.update_timer = QTimer()
+                    self.update_timer.timeout.connect(self.update_playback)
+                    self.update_timer.start(16)  # ~60fps
+                    
+                    self.play_btn.setIcon(self.pause_icon)
+                    self.is_playing = True
+                except Exception as e:
+                    print(f"Audio playback error: {e}")
+                    self.stop_playback()
+
+    def update_playback(self):
+        if not self.is_playing or self.current_stream is None:
+            return
+            
+        try:
+            # Calculate how many samples to write
+            remaining = len(self.audio_data) - self.playback_position
+            if remaining <= 0:
+                self.stop_playback()
+                return
                 
-                self.play_btn.setText("Pause")
-                self.is_playing = True
+            # Write a chunk of audio
+            chunk_size = min(1024, remaining)
+            chunk = self.audio_data[self.playback_position:self.playback_position + chunk_size]
+            self.current_stream.write(chunk)
+            self.playback_position += chunk_size
+            
+            # Update visualization
+            current_time = self.playback_position / self.sample_rate
+            self.timeline.set_cursor_position(current_time)
+            slider_value = int((current_time / self.duration) * 1000)
+            if slider_value <= 1000:
+                self.scrub_slider.setValue(slider_value)
+                
+        except Exception as e:
+            print(f"Playback update error: {e}")
+            self.stop_playback()
 
     def scrub_audio(self):
         if self.audio_data is not None:
