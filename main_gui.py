@@ -4,18 +4,145 @@ import sys
 import os
 import numpy as np
 import librosa
-import librosa.display
 import sounddevice as sd
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QAction, QFileDialog, QLabel, QPushButton,
-    QVBoxLayout, QHBoxLayout, QWidget, QGroupBox, QSlider
+    QVBoxLayout, QHBoxLayout, QWidget, QGroupBox, QSlider, QFrame
 )
-from PyQt5.QtGui import QIcon, QPixmap, QImage
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QIcon, QPixmap, QImage, QColor, QPainter, QPen, QLinearGradient
+from PyQt5.QtCore import Qt, QTimer, QRect, QPoint
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 
 from processing import get_audio_info, detect_gunshot, locate_gunshots, categorize_firearm
 from database import init_db, query_past_files
+
+class TimelineWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(100)
+        self.audio_data = None
+        self.sample_rate = None
+        self.cursor_position = 0
+        self.gunshot_markers = []
+        self.setMouseTracking(True)
+        self.dragging = False
+        self.setCursor(Qt.PointingHandCursor)
+
+    def set_audio_data(self, audio_data, sample_rate):
+        self.audio_data = audio_data
+        self.sample_rate = sample_rate
+        self.update()
+
+    def set_cursor_position(self, position):
+        self.cursor_position = position
+        self.update()
+
+    def set_gunshot_markers(self, markers):
+        self.gunshot_markers = markers
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.dragging = True
+            x = event.x()
+            self.cursor_position = (x / self.width()) * self.duration
+            self.parent().parent().parent().scrub_to_position(self.cursor_position)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.dragging = False
+
+    def mouseMoveEvent(self, event):
+        if self.dragging:
+            x = event.x()
+            self.cursor_position = (x / self.width()) * self.duration
+            self.parent().parent().parent().scrub_to_position(self.cursor_position)
+        self.update()
+
+    def paintEvent(self, event):
+        if self.audio_data is None:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Draw background
+        painter.fillRect(self.rect(), QColor(30, 30, 30))
+
+        width = self.width()
+        height = self.height()
+        center_y = height // 2
+
+        # Draw time grid
+        painter.setPen(QPen(QColor(50, 50, 50), 1))
+        grid_spacing = width // 10  # 10 segments
+        for x in range(0, width, grid_spacing):
+            painter.drawLine(x, 0, x, height)
+            time = (x / width) * self.duration
+            painter.drawText(x + 2, height - 5, f"{time:.1f}s")
+
+        # Draw waveform with gradient
+        if self.audio_data is not None:
+            gradient = QLinearGradient(0, 0, 0, height)
+            gradient.setColorAt(0, QColor(100, 180, 255))
+            gradient.setColorAt(1, QColor(60, 120, 200))
+            painter.setPen(QPen(gradient, 1))
+
+            samples_per_pixel = len(self.audio_data) / width
+            for x in range(width):
+                start_idx = int(x * samples_per_pixel)
+                end_idx = int((x + 1) * samples_per_pixel)
+                if start_idx < len(self.audio_data):
+                    chunk = self.audio_data[start_idx:end_idx]
+                    if len(chunk) > 0:
+                        max_val = np.max(np.abs(chunk))
+                        y_height = int(max_val * height * 0.8)
+                        painter.drawLine(x, center_y - y_height//2, x, center_y + y_height//2)
+
+        # Draw gunshot markers with glow effect
+        if self.gunshot_markers:
+            for marker in self.gunshot_markers:
+                x = int((marker / self.duration) * width)
+                # Draw glow
+                glow_color = QColor(255, 100, 100, 50)
+                for i in range(5, 0, -1):
+                    painter.setPen(QPen(glow_color, i*2))
+                    painter.drawLine(x, 0, x, height)
+                # Draw marker line
+                painter.setPen(QPen(QColor(255, 50, 50), 2))
+                painter.drawLine(x, 0, x, height)
+
+        # Draw playhead cursor with glow
+        cursor_x = int((self.cursor_position / self.duration) * width)
+        # Draw cursor glow
+        glow_color = QColor(255, 255, 255, 30)
+        for i in range(6, 0, -1):
+            painter.setPen(QPen(glow_color, i*2))
+            painter.drawLine(cursor_x, 0, cursor_x, height)
+        # Draw cursor line
+        painter.setPen(QPen(QColor(255, 255, 255), 2))
+        painter.drawLine(cursor_x, 0, cursor_x, height)
+        # Draw cursor handle
+        handle_height = 10
+        painter.setBrush(QColor(255, 255, 255))
+        painter.drawPolygon([
+            QPoint(cursor_x - 5, 0),
+            QPoint(cursor_x + 5, 0),
+            QPoint(cursor_x, handle_height)
+        ])
+        painter.drawPolygon([
+            QPoint(cursor_x - 5, height),
+            QPoint(cursor_x + 5, height),
+            QPoint(cursor_x, height - handle_height)
+        ])
+
+    @property
+    def duration(self):
+        if self.audio_data is not None and self.sample_rate is not None:
+            return len(self.audio_data) / self.sample_rate
+        return 0
 
 class GunshotDetectionApp(QMainWindow):
     def __init__(self):
@@ -29,9 +156,17 @@ class GunshotDetectionApp(QMainWindow):
         self.audio_data = None
         self.is_playing = False
         self.playback_timer = QTimer()
+        self.playback_position = 0
+        self.gunshot_locations = []
+        self.current_stream = None
 
         init_db()
         self.init_ui()
+        
+        # Update timer for smooth playback visualization
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self.update_visualization)
+        self.update_timer.start(16)  # ~60fps
 
     def init_ui(self):
         self.init_menu()
@@ -76,26 +211,31 @@ class GunshotDetectionApp(QMainWindow):
         self.report_btn.clicked.connect(self.generate_report)
         self.left_panel.addWidget(self.report_btn)
 
-        # RIGHT PANEL — waveform and controls
+        # RIGHT PANEL — timeline and controls
         self.right_panel = QVBoxLayout()
         right_widget = QGroupBox("Audio Timeline Viewer")
         right_widget.setLayout(self.right_panel)
         main_layout.addWidget(right_widget, 3)
 
-        self.waveform_label = QLabel()
-        self.waveform_label.setAlignment(Qt.AlignCenter)
-        self.right_panel.addWidget(self.waveform_label)
+        # Create timeline widget
+        self.timeline = TimelineWidget()
+        self.right_panel.addWidget(self.timeline)
 
+        # Controls layout
+        controls_layout = QHBoxLayout()
+        
         self.scrub_slider = QSlider(Qt.Horizontal)
-        self.scrub_slider.setRange(0, 100)
+        self.scrub_slider.setRange(0, 1000)
         self.scrub_slider.setEnabled(False)
-        self.scrub_slider.sliderReleased.connect(self.scrub_audio)
-        self.right_panel.addWidget(self.scrub_slider)
+        self.scrub_slider.sliderMoved.connect(self.scrub_audio)
+        controls_layout.addWidget(self.scrub_slider)
 
         self.play_btn = QPushButton("Play")
         self.play_btn.setEnabled(False)
         self.play_btn.clicked.connect(self.toggle_playback)
-        self.right_panel.addWidget(self.play_btn)
+        controls_layout.addWidget(self.play_btn)
+
+        self.right_panel.addLayout(controls_layout)
 
         self.placeholder_text = QLabel("Load an audio file to begin.")
         self.placeholder_text.setAlignment(Qt.AlignCenter)
@@ -130,59 +270,75 @@ class GunshotDetectionApp(QMainWindow):
                 f"<b>Length:</b> {self.duration:.2f} sec<br>"
                 f"<b>Sample Rate:</b> {sr} Hz"
             )
-            self.generate_waveform(y, sr)
+            
+            self.timeline.set_audio_data(y, sr)
             self.scrub_slider.setEnabled(True)
             self.play_btn.setEnabled(True)
             self.placeholder_text.setText("")
             self.detect_btn.setEnabled(True)
             self.run_all_btn.setEnabled(True)
 
-    def generate_waveform(self, y, sr):
-        plt.figure(figsize=(12, 2))
-        librosa.display.waveshow(y, sr=sr, x_axis='time', color='gray')
-        plt.axis('off')
-        plt.tight_layout()
-        plt.savefig("waveform_temp.png", bbox_inches='tight', pad_inches=0)
-        plt.close()
+    def update_visualization(self):
+        if self.is_playing and self.current_stream:
+            try:
+                pos = self.current_stream.time
+                self.timeline.set_cursor_position(pos)
+                new_value = int((pos / self.duration) * 1000)
+                if new_value <= 1000:
+                    self.scrub_slider.setValue(new_value)
+                else:
+                    self.stop_playback()
+            except:
+                self.stop_playback()
 
-        image = QImage("waveform_temp.png")
-        self.waveform_label.setPixmap(QPixmap.fromImage(image))
+    def stop_playback(self):
+        if self.current_stream:
+            self.current_stream.stop()
+        self.playback_timer.stop()
+        self.play_btn.setText("Play")
+        self.is_playing = False
+
+    def scrub_to_position(self, position):
+        if self.audio_data is not None:
+            value = int((position / self.duration) * 1000)
+            self.scrub_slider.setValue(value)
+            self.timeline.set_cursor_position(position)
+            if self.is_playing:
+                self.stop_playback()
+                self.toggle_playback()  # Restart playback from new position
 
     def toggle_playback(self):
         if self.is_playing:
-            sd.stop()
-            self.playback_timer.stop()
-            self.play_btn.setText("Play")
-            self.is_playing = False
+            self.stop_playback()
         else:
             if self.audio_data is not None:
-                start_sample = int((self.scrub_slider.value() / 100.0) * len(self.audio_data))
+                start_sample = int((self.scrub_slider.value() / 1000.0) * len(self.audio_data))
                 data_to_play = self.audio_data[start_sample:]
-                sd.play(data_to_play, self.sample_rate)
-
-                self.playback_timer.timeout.connect(self.update_slider_during_playback)
-                self.playback_timer.start(200)
-
+                
+                self.current_stream = sd.OutputStream(
+                    samplerate=self.sample_rate,
+                    channels=1
+                )
+                self.current_stream.start()
+                self.current_stream.write(data_to_play)
+                
                 self.play_btn.setText("Pause")
                 self.is_playing = True
 
-    def update_slider_during_playback(self):
-        if self.audio_data is not None:
-            pos = sd.get_stream().time
-            new_value = int((pos / self.duration) * 100)
-            if new_value <= 100:
-                self.scrub_slider.setValue(new_value)
-            else:
-                self.playback_timer.stop()
-                self.scrub_slider.setValue(100)
-                self.play_btn.setText("Play")
-                self.is_playing = False
-
     def scrub_audio(self):
         if self.audio_data is not None:
-            sd.stop()
-            self.is_playing = False
-            self.play_btn.setText("Play")
+            pos = (self.scrub_slider.value() / 1000.0) * self.duration
+            self.timeline.set_cursor_position(pos)
+            if self.is_playing:
+                self.stop_playback()
+                self.toggle_playback()  # Restart playback from new position
+
+    def locate_gunshots_handler(self):
+        if not self.current_file:
+            return
+        locations = locate_gunshots(self.current_file)
+        self.gunshot_locations = locations
+        self.timeline.set_gunshot_markers(locations)
 
     def detect_gunshot_handler(self):
         if not self.current_file:
@@ -198,12 +354,6 @@ class GunshotDetectionApp(QMainWindow):
                 f"<span style='color: red; font-weight: bold;'>No Gunshots Detected ({result['confidence']}%)</span>"
             )
             self.locate_btn.setVisible(False)
-
-    def locate_gunshots_handler(self):
-        if not self.current_file:
-            return
-        locations = locate_gunshots(self.current_file)
-        print("Located gunshots at:", locations)
 
     def run_all(self):
         self.detect_gunshot_handler()
