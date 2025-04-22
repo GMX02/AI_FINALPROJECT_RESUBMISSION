@@ -8,7 +8,8 @@ import sounddevice as sd
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QAction, QFileDialog, QLabel, QPushButton,
     QVBoxLayout, QHBoxLayout, QWidget, QGroupBox, QSlider, QFrame,
-    QProgressDialog, QProgressBar, QDialog, QVBoxLayout
+    QProgressDialog, QProgressBar, QDialog, QVBoxLayout, QLineEdit,
+    QComboBox, QGridLayout, QScrollArea
 )
 from PyQt5.QtGui import QIcon, QPixmap, QImage, QColor, QPainter, QPen, QLinearGradient
 from PyQt5.QtCore import Qt, QTimer, QRect, QPoint, QSize, QThread, pyqtSignal
@@ -252,7 +253,7 @@ class GunshotDetectionApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Gunshot Audio Detection Platform")
-        self.setMinimumSize(1200, 800)
+        self.setMinimumSize(1200, 1000)  # Increased height for new section
 
         self.current_file = None
         self.duration = 0
@@ -275,16 +276,27 @@ class GunshotDetectionApp(QMainWindow):
     def init_ui(self):
         self.init_menu()
 
-        main_layout = QHBoxLayout()
+        # Create main scroll area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setCentralWidget(scroll)
+
+        # Create container widget for all content
         container = QWidget()
+        main_layout = QVBoxLayout()
         container.setLayout(main_layout)
-        self.setCentralWidget(container)
+        scroll.setWidget(container)
+
+        # Top section with left and right panels
+        top_section = QHBoxLayout()
+        main_layout.addLayout(top_section)
 
         # LEFT PANEL — file info and controls
         self.left_panel = QVBoxLayout()
         left_widget = QGroupBox("Audio File Information")
         left_widget.setLayout(self.left_panel)
-        main_layout.addWidget(left_widget, 1)
+        top_section.addWidget(left_widget, 1)
 
         self.file_info_label = QLabel("No file loaded")
         self.file_info_label.setWordWrap(True)
@@ -321,7 +333,7 @@ class GunshotDetectionApp(QMainWindow):
         self.right_panel = QVBoxLayout()
         right_widget = QGroupBox("Audio Timeline Viewer")
         right_widget.setLayout(self.right_panel)
-        main_layout.addWidget(right_widget, 3)
+        top_section.addWidget(right_widget, 3)
 
         # Create timeline widget
         self.timeline = TimelineWidget()
@@ -408,7 +420,7 @@ class GunshotDetectionApp(QMainWindow):
         self.play_btn.setIcon(self.play_icon)
         self.play_btn.setIconSize(QSize(20, 20))
         controls_layout.addWidget(self.play_btn)
-        
+
         self.scrub_slider = QSlider(Qt.Horizontal)
         self.scrub_slider.setRange(0, 1000)
         self.scrub_slider.setEnabled(False)
@@ -434,6 +446,114 @@ class GunshotDetectionApp(QMainWindow):
         self.placeholder_text = QLabel("Load an audio file to begin.")
         self.placeholder_text.setAlignment(Qt.AlignCenter)
         self.right_panel.addWidget(self.placeholder_text)
+
+        # BOTTOM PANEL — categorization
+        bottom_panel = QHBoxLayout()
+        bottom_widget = QGroupBox("Firearm Categorization")
+        bottom_widget.setLayout(bottom_panel)
+        main_layout.addWidget(bottom_widget)
+
+        # Input section
+        input_section = QVBoxLayout()
+        input_widget = QWidget()
+        input_widget.setLayout(input_section)
+        input_widget.setStyleSheet("""
+            QWidget {
+                background-color: #2b2b2b;
+                border-radius: 5px;
+                padding: 10px;
+            }
+            QLabel {
+                color: #cccccc;
+                font-size: 12px;
+            }
+            QLineEdit, QComboBox {
+                background-color: #3b3b3b;
+                color: #cccccc;
+                border: 1px solid #4b4b4b;
+                border-radius: 3px;
+                padding: 5px;
+                min-width: 150px;
+            }
+            QPushButton {
+                background-color: #3b3b3b;
+                color: #cccccc;
+                border: none;
+                padding: 5px;
+                border-radius: 3px;
+                min-width: 100px;
+            }
+            QPushButton:hover {
+                background-color: #4b4b4b;
+            }
+        """)
+        bottom_panel.addWidget(input_widget, 1)
+
+        # Input fields
+        self.distance_input = QLineEdit()
+        self.distance_input.setPlaceholderText("Enter distance (meters)")
+        input_section.addWidget(QLabel("Distance:"))
+        input_section.addWidget(self.distance_input)
+
+        self.firearm_type = QComboBox()
+        self.firearm_type.addItems(["Pistol", "Rifle", "Shotgun", "Submachine Gun"])
+        input_section.addWidget(QLabel("Firearm Type:"))
+        input_section.addWidget(self.firearm_type)
+
+        self.caliber_input = QLineEdit()
+        self.caliber_input.setPlaceholderText("Enter caliber")
+        input_section.addWidget(QLabel("Caliber:"))
+        input_section.addWidget(self.caliber_input)
+
+        self.environment = QComboBox()
+        self.environment.addItems(["Indoor", "Outdoor", "Urban", "Rural"])
+        input_section.addWidget(QLabel("Environment:"))
+        input_section.addWidget(self.environment)
+
+        # Add analyze button
+        self.analyze_btn = QPushButton("Analyze")
+        self.analyze_btn.clicked.connect(self.analyze_firearm)
+        input_section.addWidget(self.analyze_btn)
+
+        # Results section
+        results_section = QHBoxLayout()
+        results_widget = QWidget()
+        results_widget.setLayout(results_section)
+        results_widget.setStyleSheet("""
+            QWidget {
+                background-color: #2b2b2b;
+                border-radius: 5px;
+                padding: 10px;
+            }
+            QLabel {
+                color: #cccccc;
+                font-size: 12px;
+            }
+        """)
+        bottom_panel.addWidget(results_widget, 2)
+
+        # Image containers
+        self.firearm_image = QLabel()
+        self.firearm_image.setFixedSize(200, 200)
+        self.firearm_image.setStyleSheet("border: 1px solid #4b4b4b;")
+        self.firearm_image.setAlignment(Qt.AlignCenter)
+        results_section.addWidget(self.firearm_image)
+
+        self.bullet_image = QLabel()
+        self.bullet_image.setFixedSize(200, 200)
+        self.bullet_image.setStyleSheet("border: 1px solid #4b4b4b;")
+        self.bullet_image.setAlignment(Qt.AlignCenter)
+        results_section.addWidget(self.bullet_image)
+
+        # Info labels
+        info_layout = QVBoxLayout()
+        self.firearm_info = QLabel("Firearm: AR-15\nCaliber: 5.56mm\nType: Rifle")
+        self.firearm_info.setStyleSheet("font-size: 14px;")
+        info_layout.addWidget(self.firearm_info)
+        results_section.addLayout(info_layout)
+
+        # Add some spacing at the bottom
+        main_layout.addStretch(1)
 
     def init_menu(self):
         menubar = self.menuBar()
@@ -504,7 +624,7 @@ class GunshotDetectionApp(QMainWindow):
         self.detect_btn.setEnabled(True)
         self.locate_btn.setEnabled(True)
         self.run_all_btn.setEnabled(True)
-        
+
         # Update time display
         self.update_time_display(0)
         
@@ -664,6 +784,30 @@ class GunshotDetectionApp(QMainWindow):
     def query_database(self):
         results = query_past_files()
         print("Queried database:", results)
+
+    def analyze_firearm(self):
+        # Dummy analysis function
+        # In a real implementation, this would process the inputs and return actual results
+        firearm_path = "gui_files/ar15.jpg"  # Replace with actual path
+        bullet_path = "gui_files/bullet.jpg"  # Replace with actual path
+        
+        # Load and display images
+        if os.path.exists(firearm_path):
+            pixmap = QPixmap(firearm_path)
+            self.firearm_image.setPixmap(pixmap.scaled(200, 200, Qt.KeepAspectRatio))
+        
+        if os.path.exists(bullet_path):
+            pixmap = QPixmap(bullet_path)
+            self.bullet_image.setPixmap(pixmap.scaled(200, 200, Qt.KeepAspectRatio))
+        
+        # Update info
+        self.firearm_info.setText(
+            f"Firearm: AR-15\n"
+            f"Caliber: 5.56mm\n"
+            f"Type: Rifle\n"
+            f"Distance: {self.distance_input.text()}m\n"
+            f"Environment: {self.environment.currentText()}"
+        )
 
 def locate_gunshots(audio_file):
     # Dummy function that returns 3 evenly spaced gunshots
