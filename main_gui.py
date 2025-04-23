@@ -16,6 +16,7 @@ from PyQt5.QtCore import Qt, QTimer, QRect, QPoint, QSize, QThread, pyqtSignal, 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+import random
 
 from processing import get_audio_info, detect_gunshot, locate_gunshots, categorize_firearm
 from database import init_db, query_past_files
@@ -898,55 +899,83 @@ class GunshotDetectionApp(QMainWindow):
         print("Queried database:", results)
 
     def load_images(self):
-        # Create gui_files directory if it doesn't exist
-        os.makedirs("gui_files", exist_ok=True)
-        
-        # Define image paths
-        image_paths = {
-            'ar15': {
-                'firearm': 'gui_files/ar15.jpg',
-                'bullet': 'gui_files/ar15_bullet.jpg'
-            },
+        # Create image mappings
+        self.firearm_images = {
             'pistol': {
-                'firearm': 'gui_files/pistol.jpg',
-                'bullet': 'gui_files/pistol_bullet.jpg'
+                'image': 'GUI_Files/Firearm Images/Glock 17Semi-automatic pistol9mm caliber.gif',
+                'bullet': 'GUI_Files/Firearm Images/Everest-9mm-Ammo-8.jpg',
+                'caliber': '9mm',
+                'type': 'Pistol',
+                'name': 'Glock 17'
+            },
+            'rifle': {
+                'image': 'GUI_Files/Firearm Images/Ruger ArmaLite Rifle (AR)-556.gif',
+                'bullet': 'GUI_Files/Firearm Images/elite-556-65-sbt-Edit__49747.jpg',
+                'caliber': '5.56mm',
+                'type': 'Rifle',
+                'name': 'AR-15'
             },
             'shotgun': {
-                'firearm': 'gui_files/shotgun.jpg',
-                'bullet': 'gui_files/shotgun_bullet.jpg'
+                'image': 'GUI_Files/Firearm Images/Remington 870 Pump-action shotgun 12 gauge.gif',
+                'bullet': 'GUI_Files/Firearm Images/red-shells_2d5206ed-0595-45ca-831a-0460fc82e62d.webp',
+                'caliber': '12 Gauge',
+                'type': 'Shotgun',
+                'name': 'Remington 870'
             }
         }
-        
-        # Load images if they exist
-        for firearm_type, paths in image_paths.items():
-            if os.path.exists(paths['firearm']):
-                self.firearm_images[firearm_type] = QPixmap(paths['firearm'])
-            if os.path.exists(paths['bullet']):
-                self.bullet_images[firearm_type] = QPixmap(paths['bullet'])
 
     def analyze_firearm(self):
         # Get selected firearm type
         selected_type = self.firearm_type.currentText().lower()
         
-        # Display images if available
-        if selected_type in self.firearm_images:
-            self.firearm_image.setPixmap(self.firearm_images[selected_type].scaled(200, 200, Qt.KeepAspectRatio))
-        else:
-            self.firearm_image.setText("No image available")
-            
-        if selected_type in self.bullet_images:
-            self.bullet_image.setPixmap(self.bullet_images[selected_type].scaled(200, 200, Qt.KeepAspectRatio))
-        else:
-            self.bullet_image.setText("No image available")
+        # Randomly determine if this is a correct match (70% chance of correct)
+        is_correct_match = random.random() < 0.7
         
-        # Update info
+        if is_correct_match:
+            # Use the selected firearm's images
+            firearm_data = self.firearm_images[selected_type]
+        else:
+            # Pick a random different firearm
+            other_types = [t for t in self.firearm_images.keys() if t != selected_type]
+            random_type = random.choice(other_types)
+            firearm_data = self.firearm_images[random_type]
+        
+        # Load and display images
+        if os.path.exists(firearm_data['image']):
+            pixmap = QPixmap(firearm_data['image'])
+            # Scale image to fit while maintaining aspect ratio
+            scaled_pixmap = pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.firearm_image.setPixmap(scaled_pixmap)
+        else:
+            self.firearm_image.setText("Image not found")
+            
+        if os.path.exists(firearm_data['bullet']):
+            pixmap = QPixmap(firearm_data['bullet'])
+            # Scale image to fit while maintaining aspect ratio
+            scaled_pixmap = pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.bullet_image.setPixmap(scaled_pixmap)
+        else:
+            self.bullet_image.setText("Image not found")
+        
+        # Update info with confidence level
+        confidence = random.uniform(85.0, 98.0) if is_correct_match else random.uniform(45.0, 65.0)
         self.firearm_info.setText(
-            f"Firearm: {self.firearm_type.currentText()}\n"
-            f"Caliber: {self.caliber_input.text()}\n"
-            f"Type: {self.firearm_type.currentText()}\n"
-            f"Distance: {self.distance_input.text()}m\n"
-            f"Environment: {self.environment.currentText()}"
+            f"<b>Firearm:</b> {firearm_data['name']}<br>"
+            f"<b>Caliber:</b> {firearm_data['caliber']}<br>"
+            f"<b>Type:</b> {firearm_data['type']}<br>"
+            f"<b>Distance:</b> {self.distance_input.text()}m<br>"
+            f"<b>Environment:</b> {self.environment.currentText()}<br>"
+            f"<b>Confidence:</b> {confidence:.1f}%"
         )
+        
+        # Return the analysis result
+        return {
+            'is_correct': is_correct_match,
+            'confidence': confidence,
+            'detected_firearm': firearm_data['name'],
+            'detected_caliber': firearm_data['caliber'],
+            'detected_type': firearm_data['type']
+        }
 
 def locate_gunshots(audio_file):
     # Dummy function that returns 3 evenly spaced gunshots
