@@ -401,6 +401,37 @@ class GunshotDetectionApp(QMainWindow):
         self.detect_btn.setEnabled(False)
         self.left_panel.addWidget(self.detect_btn)
 
+        # Add detection parameter controls
+        param_group = QGroupBox("Detection Parameters")
+        param_layout = QVBoxLayout()
+        
+        # Frame duration control
+        frame_layout = QHBoxLayout()
+        frame_layout.addWidget(QLabel("Frame Duration (s):"))
+        self.frame_duration = QLineEdit("0.05")
+        self.frame_duration.setFixedWidth(60)
+        frame_layout.addWidget(self.frame_duration)
+        param_layout.addLayout(frame_layout)
+        
+        # Energy threshold control
+        threshold_layout = QHBoxLayout()
+        threshold_layout.addWidget(QLabel("Energy Threshold:"))
+        self.energy_threshold = QLineEdit("0.6")
+        self.energy_threshold.setFixedWidth(60)
+        threshold_layout.addWidget(self.energy_threshold)
+        param_layout.addLayout(threshold_layout)
+        
+        # Min time between shots control
+        min_time_layout = QHBoxLayout()
+        min_time_layout.addWidget(QLabel("Min Time Between Shots (s):"))
+        self.min_time_between = QLineEdit("0.3")
+        self.min_time_between.setFixedWidth(60)
+        min_time_layout.addWidget(self.min_time_between)
+        param_layout.addLayout(min_time_layout)
+        
+        param_group.setLayout(param_layout)
+        self.left_panel.addWidget(param_group)
+
         self.detection_result_label = QLabel("")
         self.detection_result_label.setStyleSheet("color: #cccccc;")
         self.left_panel.addWidget(self.detection_result_label)
@@ -679,8 +710,10 @@ class GunshotDetectionApp(QMainWindow):
 
     def _handle_processing_result(self, result):
         self.hide_processing_popup()
-        if result is not None:
-            # Update GUI in the main thread
+        
+        # Handle different types of results
+        if isinstance(result, dict) and 'filename' in result:
+            # This is a file loading result
             self.current_file = result['filename']
             self.audio_data = result['audio_data']
             self.sample_rate = result['sample_rate']
@@ -698,6 +731,14 @@ class GunshotDetectionApp(QMainWindow):
             self.worker.progress.connect(lambda x: None)  # Progress updates can be handled here
             self.worker.finished.connect(self.timeline_loaded)
             self.worker.start()
+            
+        elif isinstance(result, dict) and 'presence' in result:
+            # This is a gunshot detection result
+            self._handle_detection_result(result)
+            
+        elif isinstance(result, list):
+            # This is a gunshot location result
+            self._handle_locate_result(result)
 
     def hide_processing_popup(self):
         if hasattr(self, 'popup'):
@@ -866,26 +907,97 @@ class GunshotDetectionApp(QMainWindow):
                 self.stop_playback()
                 self.toggle_playback()  # Restart playback from new position
 
-    def locate_gunshots_handler(self):
-        if not self.current_file:
-            return
-        locations = locate_gunshots(self.current_file)
-        self.timeline.set_gunshot_markers(locations)
-
     def detect_gunshot_handler(self):
         if not self.current_file:
             return
-        result = detect_gunshot(self.current_file)
+        
+        # Show processing popup
+        self.process_with_popup(
+            self._detect_gunshot_task,
+            "Detecting gunshots...",
+            self.current_file
+        )
+
+    def _detect_gunshot_task(self, file_path):
+        try:
+            # Get parameters from GUI
+            frame_duration = float(self.frame_duration.text())
+            energy_threshold = float(self.energy_threshold.text())
+            min_time_between = float(self.min_time_between.text())
+            
+            # Call detection with parameters
+            from basicTimeStamping import detect_gunshots
+            timestamps = detect_gunshots(
+                file_path,
+                frame_duration=frame_duration,
+                energy_threshold=energy_threshold,
+                min_time_between=min_time_between
+            )
+            
+            return {
+                'presence': len(timestamps) > 0,
+                'confidence': min(95.0, len(timestamps) * 10.0),
+                'timestamps': timestamps
+            }
+        except ValueError as e:
+            print(f"Invalid parameter value: {e}")
+            return {
+                'presence': False,
+                'confidence': 0.0,
+                'timestamps': []
+            }
+        except Exception as e:
+            print(f"Error detecting gunshots: {e}")
+            return {
+                'presence': False,
+                'confidence': 0.0,
+                'timestamps': []
+            }
+
+    def _handle_detection_result(self, result):
         if result['presence']:
             self.detection_result_label.setText(
-                f"<span style='color: green; font-weight: bold;'>Gunshots Detected ({result['confidence']}%)</span>"
+                f"<span style='color: green; font-weight: bold;'>Gunshots Detected ({result['confidence']:.1f}%)</span>"
             )
             self.locate_btn.setEnabled(True)
+            # Update timeline with detected timestamps
+            self.gunshot_locations = result['timestamps']
+            self.timeline.set_gunshot_markers(result['timestamps'])
+            self.timeline.update()  # Force update of the timeline
         else:
             self.detection_result_label.setText(
-                f"<span style='color: red; font-weight: bold;'>No Gunshots Detected ({result['confidence']}%)</span>"
+                f"<span style='color: red; font-weight: bold;'>No Gunshots Detected ({result['confidence']:.1f}%)</span>"
             )
             self.locate_btn.setEnabled(False)
+            # Clear gunshot markers
+            self.gunshot_locations = []
+            self.timeline.set_gunshot_markers([])
+            self.timeline.update()  # Force update of the timeline
+
+    def locate_gunshots_handler(self):
+        if not self.current_file:
+            return
+        
+        # Show processing popup
+        self.process_with_popup(
+            self._locate_gunshots_task,
+            "Locating gunshots...",
+            self.current_file
+        )
+
+    def _locate_gunshots_task(self, file_path):
+        # Use real detection by default
+        return locate_gunshots(file_path, use_dummy=False)
+
+    def _handle_locate_result(self, timestamps):
+        if timestamps:
+            self.gunshot_locations = timestamps
+            self.timeline.set_gunshot_markers(timestamps)
+            self.timeline.update()  # Force update of the timeline
+        else:
+            self.gunshot_locations = []
+            self.timeline.set_gunshot_markers([])
+            self.timeline.update()  # Force update of the timeline
 
     def run_all(self):
         self.detect_gunshot_handler()
@@ -977,7 +1089,7 @@ class GunshotDetectionApp(QMainWindow):
             'detected_type': firearm_data['type']
         }
 
-def locate_gunshots(audio_file):
+def dummy_locate_gunshots(audio_file):
     # Dummy function that returns 3 evenly spaced gunshots
     y, sr = librosa.load(audio_file, sr=None)
     duration = librosa.get_duration(y=y, sr=sr)
@@ -1000,6 +1112,14 @@ def locate_gunshots(audio_file):
         })
     
     return gunshots
+
+def locate_gunshots(audio_file, use_dummy=False):
+    if use_dummy:
+        return dummy_locate_gunshots(audio_file)
+    else:
+        # Use the real detection from processing.py
+        from processing import locate_gunshots as real_locate_gunshots
+        return real_locate_gunshots(audio_file)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

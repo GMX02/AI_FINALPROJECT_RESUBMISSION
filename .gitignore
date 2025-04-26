@@ -1,7 +1,7 @@
 # Ignore UrbanSound8K dataset
 UrbanSound8K/
 UrbanSound8K.tar.gz
-
+venv/
 # Ignore gunshot audio dataset
 edge-collected-gunshot-audio/
 edge-collected-gunshot-audio.zip
