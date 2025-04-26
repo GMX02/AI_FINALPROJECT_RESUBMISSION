@@ -58,7 +58,7 @@ Datasets will be placed inside `/data/`.
 
 ---
 
-## 🛠 How to Train Your Model
+## How to Train Your Model
 
 1. **Extract features**:
 ```bash
@@ -75,7 +75,7 @@ The trained model will be saved into `/models/gunshot_classifier.h5`.
 
 ---
 
-## 🎯 How to Run the GUI
+## How to Run the GUI
 
 1. Launch the GUI:
 ```bash
