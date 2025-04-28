@@ -25,7 +25,7 @@ from processing import get_audio_info, detect_gunshot, locate_gunshots, categori
 from database import init_db, query_past_files
 
 class TimelineWorker(QThread):
-    finished = pyqtSignal(object, object)
+    finished = pyqtSignal(object, object) 
     progress = pyqtSignal(int)
 
     def __init__(self, audio_data, sample_rate):
