@@ -5,6 +5,7 @@ from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QPen
 from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QRect
 from main_gui import GunshotDetectionApp
 
+# Widget that displays a rotating loading spinner
 class LoadingSpinner(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -15,9 +16,11 @@ class LoadingSpinner(QWidget):
         self.timer.start(50)  # Update every 50ms
 
     def update_angle(self):
+        # Increase angle by 10 degrees each update
         self.angle = (self.angle + 10) % 360
         self.update()
 
+    # Custom painting of the spinner
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -30,6 +33,7 @@ class LoadingSpinner(QWidget):
         rect = QRect(5, 5, 40, 40)
         painter.drawArc(rect, self.angle * 16, 270 * 16)  # 270 degrees arc
 
+# Splash screen displayed at application startup
 class SplashScreen(QWidget):
     def __init__(self):
         super().__init__()
@@ -99,6 +103,7 @@ class SplashScreen(QWidget):
         self.fade_out.setEasingCurve(QEasingCurve.InOutQuad)
         self.fade_out.finished.connect(self.close)
 
+    # When splash screen is shown, start animations
     def showEvent(self, event):
         super().showEvent(event)
         self.animation.start()
@@ -113,6 +118,7 @@ class SplashScreen(QWidget):
         self.current_step = 0
         self.start_loading_sequence()
 
+    # Display each loading step sequentially with a delay
     def start_loading_sequence(self):
         if self.current_step < len(self.loading_sequence):
             text, duration = self.loading_sequence[self.current_step]
@@ -121,10 +127,12 @@ class SplashScreen(QWidget):
         else:
             self.fade_out.start()
 
+    # Proceed to next step in the loading sequence
     def next_loading_step(self):
         self.current_step += 1
         self.start_loading_sequence()
 
+    # Paint semi-transparent background with rounded corners
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -134,6 +142,8 @@ class SplashScreen(QWidget):
         painter.setBrush(QColor(43, 43, 43, 230))  # Semi-transparent dark background
         painter.drawRoundedRect(self.rect(), 10, 10)
 
+
+# Main application entry point
 def main():
     app = QApplication(sys.argv)
     

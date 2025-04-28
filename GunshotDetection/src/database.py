@@ -5,8 +5,8 @@ import os
 
 DB_PATH = 'queries.db'
 
+# Initialize db and table if not exists
 def init_db():
-    # initialize db and table if not exists
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
@@ -21,6 +21,7 @@ def init_db():
     conn.commit()
     conn.close()
 
+# Query the 10 most recent past detection entries
 def query_past_files():
     if not os.path.exists(DB_PATH):
         return []

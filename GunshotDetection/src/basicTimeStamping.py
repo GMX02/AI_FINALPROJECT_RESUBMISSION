@@ -3,6 +3,7 @@ import librosa
 import os
 import soundfile as sf
 
+# Detects gunshots in an audio file based on energy spikes
 def detect_gunshots(audio_path, frame_duration=0.05, energy_threshold=0.6, min_time_between=0.3):
     y, sr = librosa.load(audio_path, sr=None)
     frame_length = int(frame_duration * sr)

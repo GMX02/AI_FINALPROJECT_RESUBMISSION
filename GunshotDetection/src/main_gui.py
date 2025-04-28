@@ -24,15 +24,18 @@ import random
 from processing import get_audio_info, detect_gunshot, locate_gunshots, categorize_firearm
 from database import init_db, query_past_files
 
+# Background thread to load and prepare audio data for visualization.
 class TimelineWorker(QThread):
     finished = pyqtSignal(object, object) 
     progress = pyqtSignal(int)
 
+    # Initialize the worker with audio data and sample rate.
     def __init__(self, audio_data, sample_rate):
         super().__init__()
         self.audio_data = audio_data
         self.sample_rate = sample_rate
-
+        
+    # Run the worker, simulate processing, and emit results.
     def run(self):
         # Simulate some processing time
         self.progress.emit(0)
@@ -42,7 +45,10 @@ class TimelineWorker(QThread):
         self.finished.emit(self.audio_data, self.sample_rate)
         self.progress.emit(100)
 
+# Dialog to display metadata information about a detected gunshot.
 class GunshotMetadataDialog(QDialog):
+    
+    # Initialize dialog with gunshot metadata (time, confidence, type, caliber).
     def __init__(self, metadata, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Gunshot Details")
@@ -83,7 +89,10 @@ class GunshotMetadataDialog(QDialog):
         
         self.setLayout(layout)
 
+# Widget for visualizing audio waveform timeline with gunshot markers.
 class TimelineWidget(QWidget):
+    
+    #Initialize timeline widget.
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumHeight(100)
@@ -97,19 +106,23 @@ class TimelineWidget(QWidget):
         self.setCursor(Qt.PointingHandCursor)
         self.last_click_time = 0
 
+    # Set the audio data and sample rate for the timeline visualization.
     def set_audio_data(self, audio_data, sample_rate):
         self.audio_data = audio_data
         self.sample_rate = sample_rate
         self.update()
-
+        
+    # Set the cursor (playhead) position in seconds.
     def set_cursor_position(self, position):
         self.cursor_position = position
         self.update()
 
+    # Set the list of detected gunshot markers.
     def set_gunshot_markers(self, markers):
         self.gunshot_markers = markers
         self.update()
-
+        
+    # Handle mouse press event for timeline (scrubbing or opening metadata dialog).
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             if self.hovered_marker is not None:
@@ -128,10 +141,12 @@ class TimelineWidget(QWidget):
             if hasattr(main_window, 'scrub_to_position'):
                 main_window.scrub_to_position(self.cursor_position)
 
+    # Stop dragging when mouse button is released.
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.dragging = False
 
+    # Update cursor position when dragging mouse across timeline.
     def mouseMoveEvent(self, event):
         if self.dragging:
             x = event.x()
@@ -142,6 +157,7 @@ class TimelineWidget(QWidget):
                 main_window.scrub_to_position(self.cursor_position)
         self.update()
 
+    # Render the timeline widget including waveform, gunshot markers, and playhead.
     def paintEvent(self, event):
         if self.audio_data is None:
             return
@@ -241,25 +257,29 @@ class TimelineWidget(QWidget):
             QPoint(cursor_x, height - handle_height)
         ])
 
+    # Return total duration (seconds) of loaded audio.
     @property
     def duration(self):
         if self.audio_data is not None and self.sample_rate is not None:
             return len(self.audio_data) / self.sample_rate
         return 0
 
+# LoadingSpinner displays a rotating spinner to indicate loading
 class LoadingSpinner(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(50, 50)
-        self.angle = 0
-        self.timer = QTimer(self)
+        self.setFixedSize(50, 50) # Set the fixed size of spinner widget
+        self.angle = 0 # Initial angle for the spinner rotation
+        self.timer = QTimer(self) # Timer to update the angle periodically
         self.timer.timeout.connect(self.update_angle)
         self.timer.start(50)  # Update every 50ms
 
+    # Update the rotation angle and trigger a repaint
     def update_angle(self):
         self.angle = (self.angle + 10) % 360
         self.update()
 
+    # Custom drawing of the spinner
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -269,9 +289,11 @@ class LoadingSpinner(QWidget):
         pen.setCapStyle(Qt.RoundCap)
         painter.setPen(pen)
         
+        # Define the arc rectangle and draw the rotating arc
         rect = QRect(5, 5, 40, 40)
         painter.drawArc(rect, self.angle * 16, 270 * 16)  # 270 degrees arc
 
+# PopupWindow shows a modal popup with the LoadingSpinner
 class PopupWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -314,15 +336,18 @@ class PopupWindow(QDialog):
         self.animation.setEndValue(1.0)
         self.animation.setEasingCurve(QEasingCurve.InOutQuad)
 
+    # Start fade-in animation when popup is shown
     def showEvent(self, event):
         super().showEvent(event)
         self.animation.start()
-
+        
+    # Reverse the animation when popup is closed
     def closeEvent(self, event):
         self.animation.setDirection(QPropertyAnimation.Backward)
         self.animation.start()
         event.accept()
-
+        
+# ProcessingThread runs a background task in a separate thread
 class ProcessingThread(QThread):
     finished = pyqtSignal(object)  # Changed to emit result
     error = pyqtSignal(str)
@@ -335,11 +360,14 @@ class ProcessingThread(QThread):
         
     def run(self):
         try:
+            # Run the provided task function with arguments
             result = self.task_func(*self.args, **self.kwargs)
             self.finished.emit(result)
         except Exception as e:
+            # Emit an error message if exception occurs
             self.error.emit(str(e))
 
+# Main application window for gunshot detection
 class GunshotDetectionApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -361,6 +389,7 @@ class GunshotDetectionApp(QMainWindow):
         self.gunshot_locations = []
         self.current_stream = None
 
+        # Initialize database
         init_db()
         self.init_ui()
         
@@ -435,22 +464,26 @@ class GunshotDetectionApp(QMainWindow):
         param_group.setLayout(param_layout)
         self.left_panel.addWidget(param_group)
 
+        # Label to display detection results
         self.detection_result_label = QLabel("")
         self.detection_result_label.setStyleSheet("color: #cccccc;")
         self.left_panel.addWidget(self.detection_result_label)
 
+        # Button to locate exact gunshot times
         self.locate_btn = QPushButton("Locate Gunshots")
         self.locate_btn.setToolTip("Find exact positions of gunshots in the audio")
         self.locate_btn.clicked.connect(self.locate_gunshots_handler)
         self.locate_btn.setEnabled(False)
         self.left_panel.addWidget(self.locate_btn)
 
+        # Button to run full analysis
         self.run_all_btn = QPushButton("Run Full Analysis")
         self.run_all_btn.setToolTip("Run all analysis steps on current audio file")
         self.run_all_btn.clicked.connect(self.run_all)
         self.run_all_btn.setEnabled(False)
         self.left_panel.addWidget(self.run_all_btn)
 
+        # Button to generate report
         self.report_btn = QPushButton("Generate Report")
         self.report_btn.setToolTip("Export analysis results into LaTeX format")
         self.report_btn.clicked.connect(self.generate_report)
@@ -682,25 +715,30 @@ class GunshotDetectionApp(QMainWindow):
         # Add some spacing at the bottom
         main_layout.addStretch(1)
 
+    # Initializes the application menu bar
     def init_menu(self):
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
 
+        # Add action to open a new audio file
         open_action = QAction("Open Audio File", self)
         open_action.setToolTip("Open an audio file for analysis")
         open_action.triggered.connect(self.load_file)
         file_menu.addAction(open_action)
 
+        # Add action to query previously analyzed files
         db_action = QAction("Query Past Files", self)
         db_action.setToolTip("Access previously analyzed files from database")
         db_action.triggered.connect(self.query_database)
         file_menu.addAction(db_action)
 
+    # Displays a popup window showing a processing message
     def show_processing_popup(self, message="Processing..."):
         self.popup = PopupWindow(self)
         self.popup.message_label.setText(message)
         self.popup.show()
 
+    # Launches a task with a popup shown during processing
     def process_with_popup(self, task_func, message="Processing...", *args, **kwargs):
         # Show popup
         self.show_processing_popup(message)
@@ -711,6 +749,7 @@ class GunshotDetectionApp(QMainWindow):
         self.processing_thread.error.connect(self.handle_processing_error)
         self.processing_thread.start()
 
+    # Handles the result after background task completes
     def _handle_processing_result(self, result):
         self.hide_processing_popup()
         
@@ -734,24 +773,29 @@ class GunshotDetectionApp(QMainWindow):
             self.worker.progress.connect(lambda x: None)  # Progress updates can be handled here
             self.worker.finished.connect(self.timeline_loaded)
             self.worker.start()
-            
+        
+        # If gunshot detection result
         elif isinstance(result, dict) and 'presence' in result:
             # This is a gunshot detection result
             self._handle_detection_result(result)
             
+        # If gunshot location result
         elif isinstance(result, list):
             # This is a gunshot location result
             self._handle_locate_result(result)
-
+            
+    # Hides the popup after processing is done
     def hide_processing_popup(self):
         if hasattr(self, 'popup'):
             self.popup.close()
 
+    # Handle any processing error
     def handle_processing_error(self, error_message):
         self.hide_processing_popup()
         # You can add error handling here, like showing a message box
         print(f"Processing error: {error_message}")
 
+    # Opens file picker and processes selected audio file
     def load_file(self):
         fname, _ = QFileDialog.getOpenFileName(self, 'Open File', os.getcwd(), "Audio Files (*.wav *.mp3)")
         if fname:
@@ -762,6 +806,7 @@ class GunshotDetectionApp(QMainWindow):
                 fname
             )
 
+    # Loads an audio file in background thread
     def _load_file_task(self, fname):
         # This function runs in the background thread
         # Only do non-GUI operations here
@@ -776,6 +821,7 @@ class GunshotDetectionApp(QMainWindow):
             'duration': duration
         }
 
+    # Called when timeline worker finishes loading
     def timeline_loaded(self, y, sr):
         self.timeline.set_audio_data(y, sr)
         self.scrub_slider.setEnabled(True)
@@ -788,6 +834,7 @@ class GunshotDetectionApp(QMainWindow):
         # Update time display
         self.update_time_display(0)
 
+    # Updates the timeline cursor during playback
     def update_visualization(self):
         if self.is_playing and self.current_stream:
             try:
@@ -801,6 +848,7 @@ class GunshotDetectionApp(QMainWindow):
             except:
                 self.stop_playback()
 
+    # Stops playback and resets visual elements
     def stop_playback(self):
         if self.current_stream:
             try:
@@ -822,6 +870,7 @@ class GunshotDetectionApp(QMainWindow):
             self.timeline.set_cursor_position(current_time)
             self.scrub_slider.setValue(int((current_time / self.duration) * 1000))
 
+    # Move timeline cursor to new position based on slider
     def scrub_to_position(self, position):
         if self.audio_data is not None:
             value = int((position / self.duration) * 1000)
@@ -831,6 +880,7 @@ class GunshotDetectionApp(QMainWindow):
                 self.stop_playback()
                 self.toggle_playback()  # Restart playback from new position
 
+    # Toggle audio playback (play or pause)
     def toggle_playback(self):
         if self.is_playing:
             self.stop_playback()
@@ -860,6 +910,7 @@ class GunshotDetectionApp(QMainWindow):
                     print(f"Audio playback error: {e}")
                     self.stop_playback()
 
+    # Writes chunks of audio to sound device during playback
     def update_playback(self):
         if not self.is_playing or self.current_stream is None:
             return
@@ -891,6 +942,7 @@ class GunshotDetectionApp(QMainWindow):
             print(f"Playback update error: {e}")
             self.stop_playback()
 
+    # Updates the displayed current and total time
     def update_time_display(self, current_time):
         # Format current time
         minutes = int(current_time // 60)
@@ -902,6 +954,7 @@ class GunshotDetectionApp(QMainWindow):
         total_seconds = int(self.duration % 60)
         self.total_time_label.setText(f"{total_minutes:02d}:{total_seconds:02d}")
 
+    # Called when user moves scrub slider
     def scrub_audio(self):
         if self.audio_data is not None:
             pos = (self.scrub_slider.value() / 1000.0) * self.duration
@@ -910,6 +963,7 @@ class GunshotDetectionApp(QMainWindow):
                 self.stop_playback()
                 self.toggle_playback()  # Restart playback from new position
 
+    # User clicked detect gunshot button
     def detect_gunshot_handler(self):
         if not self.current_file:
             return
@@ -921,6 +975,7 @@ class GunshotDetectionApp(QMainWindow):
             self.current_file
         )
 
+    # Background task to detect gunshots
     def _detect_gunshot_task(self, file_path):
         try:
             # Get parameters from GUI
@@ -957,6 +1012,7 @@ class GunshotDetectionApp(QMainWindow):
                 'timestamps': []
             }
 
+    # Handle gunshot detection results
     def _handle_detection_result(self, result):
         if result['presence']:
             self.detection_result_label.setText(
@@ -1005,6 +1061,7 @@ class GunshotDetectionApp(QMainWindow):
             self.timeline.set_gunshot_markers([])
             self.timeline.update()
 
+    # Trigger locating gunshots in the current audio file
     def locate_gunshots_handler(self):
         if not self.current_file:
             return
@@ -1016,24 +1073,30 @@ class GunshotDetectionApp(QMainWindow):
             self.current_file
         )
 
+    # Background task to locate gunshot timestamps
     def _locate_gunshots_task(self, file_path):
         # Use real detection by default
         return locate_gunshots(file_path, use_dummy=False)
 
+    # Handle located gunshots after processing
     def _handle_locate_result(self, timestamps):
         if timestamps:
+            # Gunshots found — update the timeline markers
             self.gunshot_locations = timestamps
             self.timeline.set_gunshot_markers(timestamps)
             self.timeline.update()  # Force update of the timeline
         else:
+            # No gunshots found — clear markers
             self.gunshot_locations = []
             self.timeline.set_gunshot_markers([])
             self.timeline.update()  # Force update of the timeline
 
+    # Run both detection and location processes in sequence
     def run_all(self):
         self.detect_gunshot_handler()
         self.locate_gunshots_handler()
-
+        
+    # Generate a LaTeX report based on current analysis
     def generate_report(self):
         if self.audio_data is None:
             print("No audio file loaded.")
@@ -1043,11 +1106,14 @@ class GunshotDetectionApp(QMainWindow):
             print("No gunshot detections to report.")
             return
 
+        # Ensure reports directory exists
         os.makedirs("../reports", exist_ok=True)
 
+        # Create a timestamped filename
         report_filename = f"../reports/gunshot_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.tex"
-
+        
         with open(report_filename, 'w') as f:
+            # Write LaTeX document structure
             f.write(r"\documentclass{article}" + "\n")
             f.write(r"\usepackage{geometry}" + "\n")
             f.write(r"\geometry{margin=1in}" + "\n")
@@ -1095,13 +1161,12 @@ class GunshotDetectionApp(QMainWindow):
 
         print(f"Report generated: {report_filename}")
 
-        
-
-
+    # Queries database for past analyzed files
     def query_database(self):
         results = query_past_files()
         print("Queried database:", results)
 
+    # Load firearm and bullet images for analysis panel
     def load_images(self):
         # Create image mappings
         self.firearm_images = {
@@ -1128,6 +1193,7 @@ class GunshotDetectionApp(QMainWindow):
             }
         }
 
+    # Analyze firearm type and confidence based on user inputs
     def analyze_firearm(self):
         # Get selected firearm type
         selected_type = self.firearm_type.currentText().lower()
@@ -1181,6 +1247,7 @@ class GunshotDetectionApp(QMainWindow):
             'detected_type': firearm_data['type']
         }
 
+# Dummy function to generate 3 gunshots for testing
 def dummy_locate_gunshots(audio_file):
     # Dummy function that returns 3 evenly spaced gunshots
     y, sr = librosa.load(audio_file, sr=None)
@@ -1205,6 +1272,7 @@ def dummy_locate_gunshots(audio_file):
     
     return gunshots
 
+# Select between real and dummy gunshot locator
 def locate_gunshots(audio_file, use_dummy=False):
     if use_dummy:
         return dummy_locate_gunshots(audio_file)
@@ -1213,6 +1281,7 @@ def locate_gunshots(audio_file, use_dummy=False):
         from processing import locate_gunshots as real_locate_gunshots
         return real_locate_gunshots(audio_file)
 
+# Application entry point
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     gui = GunshotDetectionApp()
