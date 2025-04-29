@@ -96,7 +96,8 @@ def create_dataset(metadata_df):
         'Glock 17': 'glock_17_9mm_caliber',
         'Smith & Wesson': '38s&ws_dot38_caliber',
         'Remington 870': 'remington_870_12_gauge',
-        'Ruger AR-556': 'ruger_ar_556_dot223_caliber'
+        'Ruger AR-556': 'ruger_ar_556_dot223_caliber',
+        'Ruger 556': 'ruger_ar_556_dot223_caliber'
     }
     
     processed_count = 0
