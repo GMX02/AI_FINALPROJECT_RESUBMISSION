@@ -14,8 +14,7 @@ env/
 models/
 model_backups/
 *.h5
-
-
+GunshotDetection/src/__pycache__/*.pyc
 
 
 

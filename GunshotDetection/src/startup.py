@@ -159,12 +159,19 @@ class SplashScreen(QWidget):
 
 def check_directory_structure():
     """Check if the required directory structure exists, create if not"""
+    # Get the root directory (two levels up from this script)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    root_dir = os.path.dirname(parent_dir)
+    
     required_dirs = [
-        '../models',
-        '../data/raw',
-        '../data/processed',
-        '../data/splits',
-        '../reports'
+        os.path.join(root_dir, 'models'),
+        os.path.join(root_dir, 'data', 'raw'),
+        os.path.join(root_dir, 'data', 'processed'),
+        os.path.join(root_dir, 'data', 'splits'),
+        os.path.join(root_dir, 'reports'),
+        os.path.join(root_dir, 'Data files'),  # Add this directory as it's needed for metadata
+        os.path.join(root_dir, 'GUI_Files')    # Add this directory as it's needed for GUI assets
     ]
     
     for dir_path in required_dirs:
@@ -173,11 +180,15 @@ def check_directory_structure():
 
 def check_models():
     """Check if all required models exist"""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    root_dir = os.path.dirname(parent_dir)
+    
     required_models = [
-        '../../models/firearm_model.h5',
-        '../../models/caliber_model.h5',
-        '../../models/firearm_encoder.pkl',
-        '../../models/caliber_encoder.pkl'
+        os.path.join(root_dir, 'models', 'firearm_model.h5'),
+        os.path.join(root_dir, 'models', 'caliber_model.h5'),
+        os.path.join(root_dir, 'models', 'firearm_encoder.pkl'),
+        os.path.join(root_dir, 'models', 'caliber_encoder.pkl')
     ]
     
     missing_models = [model for model in required_models if not os.path.exists(model)]
@@ -185,14 +196,18 @@ def check_models():
 
 def check_data():
     """Check if required data exists"""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    root_dir = os.path.dirname(parent_dir)
+    
     required_data = [
-        '../../GUI_Files/Glock 17Semi-automatic pistol9mm caliber.gif',
-        '../../GUI_Files/REMINGTON.gif',
-        '../../GUI_Files/38 Smith & Wesson Special Revolver.38 caliber.gif',
-        '../../GUI_Files/Everest-9mm-Ammo-8.jpg',
-        '../../GUI_Files/elite-556-65-sbt-Edit__49747.jpg',
-        '../../GUI_Files/red-shells_2d5206ed-0595-45ca-831a-0460fc82e62d.webp',
-        '../../GUI_Files/38_158g_ammo_1200x.webp'
+        os.path.join(root_dir, 'GUI_Files', 'Glock 17Semi-automatic pistol9mm caliber.gif'),
+        os.path.join(root_dir, 'GUI_Files', 'REMINGTON.gif'),
+        os.path.join(root_dir, 'GUI_Files', '38 Smith & Wesson Special Revolver.38 caliber.gif'),
+        os.path.join(root_dir, 'GUI_Files', 'Everest-9mm-Ammo-8.jpg'),
+        os.path.join(root_dir, 'GUI_Files', 'elite-556-65-sbt-Edit__49747.jpg'),
+        os.path.join(root_dir, 'GUI_Files', 'red-shells_2d5206ed-0595-45ca-831a-0460fc82e62d.webp'),
+        os.path.join(root_dir, 'GUI_Files', '38_158g_ammo_1200x.webp')
     ]
     
     missing_data = [data for data in required_data if not os.path.exists(data)]
@@ -202,7 +217,12 @@ def download_data():
     """Run the data download script"""
     print("Downloading required data...")
     try:
-        subprocess.run(['python', 'download_data.py'], check=True)
+        # Get the current directory
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        download_script = os.path.join(current_dir, 'urbanSoundsDownload.py')
+        
+        # Run the download script
+        subprocess.run(['python', download_script], check=True)
         print("Data download completed successfully")
     except subprocess.CalledProcessError as e:
         print(f"Error downloading data: {e}")
@@ -382,28 +402,101 @@ def main():
     """Main startup function"""
     print("Starting system initialization...")
     
-    # Check directory structure
-    check_directory_structure()
+    # Get directory paths
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    root_dir = os.path.dirname(parent_dir)
     
-    # Check for missing models
-    missing_models = check_models()
+    # Save original directory
+    original_dir = os.getcwd()
     
-    # Check for missing data
-    missing_data = check_data()
+    # Change to root directory for all operations
+    os.chdir(root_dir)
     
-    if missing_data:
-        print("Error: Missing required data files:")
-        for data in missing_data:
-            print(f"- {data}")
-        print("Please ensure all required data files are present in the GUI_Files directory")
+    # Check for required data directories and files
+    required_data = [
+        'edge-collected-gunshot-audio',
+        'UrbanSound8K',
+        'Data files/gunshot-audio-all-metadata.csv',
+        'Data files/gunshot-audio-labels-only.csv'
+    ]
+    
+    # Check for required model files
+    required_models = [
+        'models/firearm_model.h5',
+        'models/caliber_model.h5',
+        'models/firearm_encoder.pkl',
+        'models/caliber_encoder.pkl'
+    ]
+    
+    # Check for required GUI files
+    required_gui = [
+        'GUI_Files/Glock 17Semi-automatic pistol9mm caliber.gif',
+        'GUI_Files/REMINGTON.gif',
+        'GUI_Files/38 Smith & Wesson Special Revolver.38 caliber.gif',
+        'GUI_Files/Everest-9mm-Ammo-8.jpg',
+        'GUI_Files/elite-556-65-sbt-Edit__49747.jpg',
+        'GUI_Files/red-shells_2d5206ed-0595-45ca-831a-0460fc82e62d.webp',
+        'GUI_Files/38_158g_ammo_1200x.webp'
+    ]
+    
+    # Check if we need to download data
+    need_download = False
+    for data in required_data:
+        if not os.path.exists(data):
+            print(f"Missing required data: {data}")
+            need_download = True
+    
+    # Check if we need to train models
+    need_train = False
+    for model in required_models:
+        if not os.path.exists(model):
+            print(f"Missing required model: {model}")
+            need_train = True
+    
+    # Check if we have all GUI files
+    missing_gui = []
+    for gui_file in required_gui:
+        if not os.path.exists(gui_file):
+            missing_gui.append(gui_file)
+    
+    if missing_gui:
+        print("Error: Missing required GUI files:")
+        for gui_file in missing_gui:
+            print(f"- {gui_file}")
+        os.chdir(original_dir)
         sys.exit(1)
     
-    if missing_models:
-        print("Error: Missing required model files:")
-        for model in missing_models:
-            print(f"- {model}")
-        print("Please ensure all required model files are present in the models directory")
-        sys.exit(1)
+    # Run download script if needed
+    if need_download:
+        print("Running download script...")
+        try:
+            if os.path.exists('urbanSoundsDownload.py'):
+                subprocess.run(['python', 'urbanSoundsDownload.py'], check=True)
+            else:
+                raise FileNotFoundError("Could not find urbanSoundsDownload.py")
+            print("Download script completed")
+        except Exception as e:
+            print(f"Error during download: {e}")
+            os.chdir(original_dir)
+            sys.exit(1)
+    
+    # Run training if needed
+    if need_train:
+        print("Running firearm classifier training...")
+        try:
+            if os.path.exists('firearm_classifier.py'):
+                subprocess.run(['python', 'firearm_classifier.py'], check=True)
+            else:
+                raise FileNotFoundError("Could not find firearm_classifier.py")
+            print("Training completed")
+        except Exception as e:
+            print(f"Error during training: {e}")
+            os.chdir(original_dir)
+            sys.exit(1)
+    
+    # Return to original directory
+    os.chdir(original_dir)
     
     print("System initialization completed successfully")
     print("All required models and data are present")
