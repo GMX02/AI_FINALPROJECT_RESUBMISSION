@@ -460,6 +460,13 @@ class GunshotDetectionApp(QMainWindow):
         self.report_btn.clicked.connect(self.generate_report)
         self.left_panel.addWidget(self.report_btn)
 
+        # Add comprehensive report button
+        self.comprehensive_report_btn = QPushButton("Generate Comprehensive Report")
+        self.comprehensive_report_btn.setToolTip("Generate a detailed report with all analyses and visualizations")
+        self.comprehensive_report_btn.clicked.connect(self.generate_comprehensive_report)
+        self.comprehensive_report_btn.setEnabled(False)
+        self.left_panel.addWidget(self.comprehensive_report_btn)
+
         # RIGHT PANEL — timeline and controls
         self.right_panel = QVBoxLayout()
         right_widget = QGroupBox("Audio Timeline Viewer")
@@ -699,35 +706,22 @@ class GunshotDetectionApp(QMainWindow):
     def _handle_processing_result(self, result):
         self.hide_processing_popup()
         
-        # Handle different types of results
+        # Handle report generation result
+        if isinstance(result, dict) and 'report_path' in result:
+            self._handle_report_result(result)
+            return
+            
+        # Handle other results
         if isinstance(result, dict) and 'filename' in result:
-            # This is a file loading result
             self.current_file = result['filename']
             self.audio_data = result['audio_data']
             self.sample_rate = result['sample_rate']
             self.duration = result['duration']
-
-            info = get_audio_info(result['filename'])
-            self.file_info_label.setText(
-                f"<b>File:</b> {os.path.basename(result['filename'])}<br>"
-                f"<b>Length:</b> {result['duration']:.2f} sec<br>"
-                f"<b>Sample Rate:</b> {result['sample_rate']} Hz"
-            )
-            
-            # Create and start worker thread
-            self.worker = TimelineWorker(result['audio_data'], result['sample_rate'])
-            self.worker.progress.connect(lambda x: None)  # Progress updates can be handled here
-            self.worker.finished.connect(self.timeline_loaded)
-            self.worker.start()
-            
+            self.timeline_loaded(self.audio_data, self.sample_rate)
         elif isinstance(result, dict) and 'presence' in result:
-            # This is a gunshot detection result
             self._handle_detection_result(result)
-            
         elif isinstance(result, list):
-            # This is a gunshot location result
             self._handle_locate_result(result)
-            
         elif isinstance(result, dict) and 'firearm_data' in result:
             # This is a firearm analysis result
             firearm_data = result['firearm_data']
@@ -826,6 +820,7 @@ class GunshotDetectionApp(QMainWindow):
         self.detect_btn.setEnabled(True)
         self.locate_btn.setEnabled(True)
         self.run_all_btn.setEnabled(True)
+        self.comprehensive_report_btn.setEnabled(True)
         
         # Update time display
         self.update_time_display(0)
@@ -1137,9 +1132,6 @@ class GunshotDetectionApp(QMainWindow):
 
         print(f"Report generated: {report_filename}")
 
-        
-
-
     def query_database(self):
         results = query_past_files()
         print("Queried database:", results)
@@ -1239,6 +1231,266 @@ class GunshotDetectionApp(QMainWindow):
             print(f"Error details: {str(e)}")
             print("=== END ERROR ===\n")
             return None
+
+    def generate_comprehensive_report(self):
+        if self.audio_data is None:
+            print("No audio file loaded.")
+            return
+
+        # Show processing popup
+        self.process_with_popup(
+            self._generate_report_task,
+            "Generating comprehensive report...",
+            self.current_file
+        )
+
+    def _generate_report_task(self, file_path):
+        try:
+            # Create reports directory if it doesn't exist
+            os.makedirs("../reports", exist_ok=True)
+            
+            # Generate timestamp for report filename
+            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            pdf_filename = f"../reports/gunshot_report_{timestamp}.pdf"
+            
+            # Run all analyses
+            print("Running gunshot detection...")
+            detection_result = detect_gunshot(file_path)
+            
+            print("Locating gunshots...")
+            gunshot_locations = locate_gunshots(file_path)
+            
+            print("Analyzing firearm...")
+            firearm_analysis = categorize_firearm(file_path)
+            
+            # Generate spectrogram visualization
+            print("Generating spectrogram...")
+            y, sr = librosa.load(file_path, sr=None)
+            hop_length = 512
+            S = librosa.amplitude_to_db(np.abs(librosa.stft(y, hop_length=hop_length)), ref=np.max)
+            
+            plt.figure(figsize=(10, 4))
+            librosa.display.specshow(S, sr=sr, hop_length=hop_length, x_axis='time', y_axis='log')
+            for marker in gunshot_locations:
+                plt.axvline(x=marker['time'], color='r', linestyle='--', alpha=0.7)
+            plt.colorbar(format='%+2.0f dB')
+            plt.title('Spectrogram with Detected Gunshots')
+            plt.tight_layout()
+            spectrogram_path = f"../reports/spectrogram_{timestamp}.png"
+            plt.savefig(spectrogram_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            # Generate firearm analysis visualization
+            print("Generating firearm analysis visualization...")
+            plt.figure(figsize=(8, 4))
+            plt.bar(['Firearm Type', 'Caliber', 'Match Confidence'],
+                    [100, 100, firearm_analysis.get('match_confidence', 0)],
+                    color=['#1f77b4', '#ff7f0e', '#2ca02c'])
+            plt.title('Firearm Analysis Results')
+            plt.ylim(0, 100)
+            plt.ylabel('Confidence (%)')
+            firearm_analysis_path = f"../reports/firearm_analysis_{timestamp}.png"
+            plt.savefig(firearm_analysis_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            # Generate PDF using ReportLab
+            from reportlab.lib.pagesizes import letter
+            from reportlab.lib import colors
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, HRFlowable
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import inch
+            
+            # Create PDF document with larger left margin
+            doc = SimpleDocTemplate(pdf_filename, pagesize=letter,
+                                  leftMargin=72, rightMargin=72,
+                                  topMargin=72, bottomMargin=72)
+            styles = getSampleStyleSheet()
+            
+            # Custom styles
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=24,
+                spaceAfter=30,
+                textColor=colors.darkblue,
+                alignment=0  # Left align
+            )
+            
+            heading_style = ParagraphStyle(
+                'CustomHeading',
+                parent=styles['Heading2'],
+                fontSize=16,
+                spaceAfter=12,
+                textColor=colors.darkblue,
+                alignment=0  # Left align
+            )
+            
+            # Content
+            content = []
+            
+            # Title with line
+            content.append(Paragraph("GUNSHOT DETECTION REPORT", title_style))
+            content.append(HRFlowable(width="100%", thickness=2, color=colors.darkblue))
+            content.append(Spacer(1, 30))  # Increased from 20 to 30
+            
+            # File Information
+            content.append(Paragraph("AUDIO FILE INFORMATION", heading_style))
+            content.append(HRFlowable(width="100%", thickness=1, color=colors.darkblue))
+            content.append(Spacer(1, 15))  # Added spacer after line
+            file_info = [
+                ["PARAMETER", "VALUE"],
+                ["Filename", os.path.basename(file_path)],
+                ["Duration", f"{self.duration:.2f} seconds"],
+                ["Sample Rate", f"{self.sample_rate} Hz"]
+            ]
+            file_table = Table(file_info, colWidths=[2*inch, 4*inch])
+            file_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('GRID', (0, 0), (-1, -1), 1, colors.darkblue),
+                ('LEFTPADDING', (0, 0), (-1, -1), 6),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 6)
+            ]))
+            content.append(file_table)
+            content.append(Spacer(1, 30))  # Increased from 20 to 30
+            
+            # Spectrogram
+            content.append(Paragraph("SPECTROGRAM ANALYSIS", heading_style))
+            content.append(HRFlowable(width="100%", thickness=1, color=colors.darkblue))
+            content.append(Spacer(1, 15))  # Added spacer after line
+            spectrogram_img = Image(spectrogram_path, width=6*inch, height=2.4*inch)
+            content.append(spectrogram_img)
+            content.append(Spacer(1, 30))  # Increased from 20 to 30
+            
+            # Detected Gunshots
+            content.append(Paragraph("DETECTED GUNSHOTS", heading_style))
+            content.append(HRFlowable(width="100%", thickness=1, color=colors.darkblue))
+            content.append(Spacer(1, 15))  # Added spacer after line
+            gunshot_data = [["TIMESTAMP (s)", "TYPE", "CALIBER", "CONFIDENCE (%)"]]
+            for marker in gunshot_locations:
+                gunshot_data.append([
+                    f"{marker['time']:.2f}",
+                    marker.get('type', 'Unknown'),
+                    marker.get('caliber', 'Unknown'),
+                    f"{marker.get('confidence', 0) * 100:.1f}"
+                ])
+            gunshot_table = Table(gunshot_data, colWidths=[1.5*inch, 1.5*inch, 1.5*inch, 1.5*inch])
+            gunshot_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('GRID', (0, 0), (-1, -1), 1, colors.darkblue),
+                ('LEFTPADDING', (0, 0), (-1, -1), 6),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 6)
+            ]))
+            content.append(gunshot_table)
+            content.append(Spacer(1, 30))  # Increased from 20 to 30
+            
+            # Firearm Analysis
+            content.append(Paragraph("FIREARM ANALYSIS", heading_style))
+            content.append(HRFlowable(width="100%", thickness=1, color=colors.darkblue))
+            content.append(Spacer(1, 15))  # Added spacer after line
+            
+            # Get firearm and bullet images
+            firearm_type = firearm_analysis.get('firearm', '').lower()
+            firearm_data = None
+            for key, data in self.firearm_images.items():
+                if key in firearm_type or firearm_type in key or \
+                   data['name'].lower() in firearm_type or firearm_type in data['name'].lower():
+                    firearm_data = data
+                    break
+            
+            if firearm_data:
+                # Create a table for the images
+                img_table_data = [
+                    ["FIREARM IMAGE", "BULLET IMAGE"],
+                    [Image(firearm_data['image'], width=2*inch, height=2*inch),
+                     Image(firearm_data['bullet'], width=2*inch, height=2*inch)]
+                ]
+                img_table = Table(img_table_data, colWidths=[3*inch, 3*inch])
+                img_table.setStyle(TableStyle([
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.darkblue),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('LEFTPADDING', (0, 0), (-1, -1), 6),
+                    ('RIGHTPADDING', (0, 0), (-1, -1), 6)
+                ]))
+                content.append(img_table)
+                content.append(Spacer(1, 30))  # Increased from 20 to 30
+            
+            # Firearm analysis chart
+            firearm_img = Image(firearm_analysis_path, width=4.8*inch, height=2.4*inch)
+            content.append(firearm_img)
+            
+            firearm_data = [
+                ["PARAMETER", "VALUE"],
+                ["Firearm Type", firearm_analysis.get('firearm', 'Unknown')],
+                ["Caliber", firearm_analysis.get('caliber', 'Unknown')],
+                ["Match Confidence", f"{firearm_analysis.get('match_confidence', 0):.1f}%"]
+            ]
+            firearm_table = Table(firearm_data, colWidths=[2*inch, 4*inch])
+            firearm_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('GRID', (0, 0), (-1, -1), 1, colors.darkblue),
+                ('LEFTPADDING', (0, 0), (-1, -1), 6),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 6)
+            ]))
+            content.append(firearm_table)
+            content.append(Spacer(1, 30))  # Increased from 20 to 30
+            
+            # Summary
+            content.append(Paragraph("SUMMARY", heading_style))
+            content.append(HRFlowable(width="100%", thickness=1, color=colors.darkblue))
+            content.append(Spacer(1, 15))  # Added spacer after line
+            summary_text = """
+            This report contains the results of the comprehensive gunshot detection and analysis performed on the audio file. 
+            The analysis includes detection of gunshot events, their timestamps, and classification of the firearm type. 
+            The confidence levels are provided for each detection and classification.
+            """
+            content.append(Paragraph(summary_text, styles['Normal']))
+            
+            # Build PDF
+            doc.build(content)
+            
+            print(f"Report generated: {pdf_filename}")
+            return {
+                'success': True,
+                'pdf_path': pdf_filename,
+                'spectrogram_path': spectrogram_path,
+                'firearm_analysis_path': firearm_analysis_path
+            }
+            
+        except Exception as e:
+            print(f"Error generating report: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def _handle_report_result(self, result):
+        if result['success']:
+            print("Report generation completed successfully!")
+            # Open the PDF file if it exists
+            if 'pdf_path' in result and os.path.exists(result['pdf_path']):
+                os.startfile(result['pdf_path'])
+            else:
+                # Fall back to opening the directory
+                os.startfile(os.path.dirname(result['pdf_path']))
+        else:
+            print(f"Error generating report: {result['error']}")
 
 def dummy_locate_gunshots(audio_file):
     # Dummy function that returns 3 evenly spaced gunshots
