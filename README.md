@@ -1,5 +1,13 @@
 # Gunshot Detection and Classification System
 
+Setup: 
+
+run: conda install -c conda-forge python=3.9 tensorflow=2.11 librosa pandas scikit-learn numpy soundfile tqdm gdown requests pyqt5 matplotlib sqlite3
+
+
+```
+conda install -c conda-forge python=3.9 tensorflow=2.11 librosa pandas scikit-learn numpy soundfile tqdm gdown requests pyqt5 matplotlib sqlite3
+
 This project is a full Python-based system to:
 - Detect gunshot sounds in audio files
 - Differentiate gunshots from urban environmental sounds using Machine Learning (CNN)
