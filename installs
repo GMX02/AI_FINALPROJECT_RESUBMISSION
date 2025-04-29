@@ -1,0 +1,1 @@
+conda install -c conda-forge python=3.9 tensorflow=2.11 librosa pandas scikit-learn numpy soundfile tqdm gdown requests pyqt5 matplotlib sqlite3
