@@ -432,7 +432,8 @@ def main():
     # Check for required GUI files
     required_gui = [
         'GUI_Files/Glock 17Semi-automatic pistol9mm caliber.gif',
-        'GUI_Files/REMINGTON.gif',
+        'GUI_Files/REMINGTON.gif',  # For Remington 870 shotgun
+        'GUI_Files/ruger.gif',      # For Ruger 556
         'GUI_Files/38 Smith & Wesson Special Revolver.38 caliber.gif',
         'GUI_Files/Everest-9mm-Ammo-8.jpg',
         'GUI_Files/elite-556-65-sbt-Edit__49747.jpg',

@@ -1147,7 +1147,7 @@ class GunshotDetectionApp(QMainWindow):
                 'name': 'Glock 17'
             },
             'ruger': {
-                'image': '../../GUI_Files/REMINGTON.gif',  # Using this as placeholder for Ruger
+                'image': '../../GUI_Files/ruger.gif',  # Changed to use ruger.gif
                 'bullet': '../../GUI_Files/elite-556-65-sbt-Edit__49747.jpg',
                 'caliber': '5.56mm',
                 'type': 'Rifle',
