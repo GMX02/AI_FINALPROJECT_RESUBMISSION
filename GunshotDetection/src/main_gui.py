@@ -600,14 +600,6 @@ class GunshotDetectionApp(QMainWindow):
                 color: #cccccc;
                 font-size: 12px;
             }
-            QLineEdit, QComboBox {
-                background-color: #3b3b3b;
-                color: #cccccc;
-                border: 1px solid #4b4b4b;
-                border-radius: 3px;
-                padding: 5px;
-                min-width: 150px;
-            }
             QPushButton {
                 background-color: #3b3b3b;
                 color: #cccccc;
@@ -621,27 +613,6 @@ class GunshotDetectionApp(QMainWindow):
             }
         """)
         bottom_panel.addWidget(input_widget, 1)
-
-        # Input fields
-        self.distance_input = QLineEdit()
-        self.distance_input.setPlaceholderText("Enter distance (meters)")
-        input_section.addWidget(QLabel("Distance:"))
-        input_section.addWidget(self.distance_input)
-
-        self.firearm_type = QComboBox()
-        self.firearm_type.addItems(["Pistol", "Rifle", "Shotgun", "Submachine Gun"])
-        input_section.addWidget(QLabel("Firearm Type:"))
-        input_section.addWidget(self.firearm_type)
-
-        self.caliber_input = QLineEdit()
-        self.caliber_input.setPlaceholderText("Enter caliber")
-        input_section.addWidget(QLabel("Caliber:"))
-        input_section.addWidget(self.caliber_input)
-
-        self.environment = QComboBox()
-        self.environment.addItems(["Indoor", "Outdoor", "Urban", "Rural"])
-        input_section.addWidget(QLabel("Environment:"))
-        input_section.addWidget(self.environment)
 
         # Add analyze button
         self.analyze_btn = QPushButton("Analyze")
@@ -756,6 +727,63 @@ class GunshotDetectionApp(QMainWindow):
         elif isinstance(result, list):
             # This is a gunshot location result
             self._handle_locate_result(result)
+            
+        elif isinstance(result, dict) and 'firearm_data' in result:
+            # This is a firearm analysis result
+            firearm_data = result['firearm_data']
+            confidence = result['confidence']
+            
+            print("\n=== IMAGE LOADING DEBUG ===")
+            print(f"Firearm image path: {firearm_data['image']}")
+            print(f"Bullet image path: {firearm_data['bullet']}")
+            
+            # Load and display firearm image
+            if os.path.exists(firearm_data['image']):
+                print("Firearm image exists, loading...")
+                pixmap = QPixmap(firearm_data['image'])
+                if not pixmap.isNull():
+                    scaled_pixmap = pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    self.firearm_image.setPixmap(scaled_pixmap)
+                    print("Firearm image loaded successfully")
+                else:
+                    print("Error: Firearm image is null after loading")
+                    self.firearm_image.setText("Error loading firearm image")
+            else:
+                print(f"Error: Firearm image not found at {firearm_data['image']}")
+                self.firearm_image.setText("Firearm image not found")
+                
+            # Load and display bullet image
+            if os.path.exists(firearm_data['bullet']):
+                print("Bullet image exists, loading...")
+                pixmap = QPixmap(firearm_data['bullet'])
+                if not pixmap.isNull():
+                    scaled_pixmap = pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    self.bullet_image.setPixmap(scaled_pixmap)
+                    print("Bullet image loaded successfully")
+                else:
+                    print("Error: Bullet image is null after loading")
+                    self.bullet_image.setText("Error loading bullet image")
+            else:
+                print(f"Error: Bullet image not found at {firearm_data['bullet']}")
+                self.bullet_image.setText("Bullet image not found")
+            
+            # Update info with confidence level
+            info_text = (
+                f"<b>Firearm:</b> {firearm_data['name']}<br>"
+                f"<b>Caliber:</b> {firearm_data['caliber']}<br>"
+                f"<b>Type:</b> {firearm_data['type']}<br>"
+                f"<b>Confidence:</b> {confidence*100:.1f}%"
+            )
+            print(f"\nUpdating info text: {info_text}")
+            self.firearm_info.setText(info_text)
+            
+            # Store the analysis result
+            self.firearm_analysis = {
+                'match_percentage': confidence * 100,
+                'firearm_type': firearm_data['type'],
+                'ammunition': firearm_data['caliber']
+            }
+            print("=== END IMAGE LOADING DEBUG ===\n")
 
     def hide_processing_popup(self):
         if hasattr(self, 'popup'):
@@ -1117,83 +1145,100 @@ class GunshotDetectionApp(QMainWindow):
         print("Queried database:", results)
 
     def load_images(self):
-        # Create image mappings
+        # Create image mappings with correct paths
         self.firearm_images = {
-            'pistol': {
-                'image': 'GUI_Files/Firearm Images/Glock 17Semi-automatic pistol9mm caliber.gif',
-                'bullet': 'GUI_Files/Firearm Images/Everest-9mm-Ammo-8.jpg',
+            'glock': {
+                'image': '../../GUI_Files/Glock 17Semi-automatic pistol9mm caliber.gif',
+                'bullet': '../../GUI_Files/Everest-9mm-Ammo-8.jpg',
                 'caliber': '9mm',
                 'type': 'Pistol',
                 'name': 'Glock 17'
             },
-            'rifle': {
-                'image': 'GUI_Files/Firearm Images/Ruger ArmaLite Rifle (AR)-556.gif',
-                'bullet': 'GUI_Files/Firearm Images/elite-556-65-sbt-Edit__49747.jpg',
+            'ruger': {
+                'image': '../../GUI_Files/REMINGTON.gif',  # Using this as placeholder for Ruger
+                'bullet': '../../GUI_Files/elite-556-65-sbt-Edit__49747.jpg',
                 'caliber': '5.56mm',
                 'type': 'Rifle',
-                'name': 'AR-15'
+                'name': 'Ruger 556'
             },
-            'shotgun': {
-                'image': 'GUI_Files/Firearm Images/Remington 870 Pump-action shotgun 12 gauge.gif',
-                'bullet': 'GUI_Files/Firearm Images/red-shells_2d5206ed-0595-45ca-831a-0460fc82e62d.webp',
+            'remington': {
+                'image': '../../GUI_Files/REMINGTON.gif',
+                'bullet': '../../GUI_Files/red-shells_2d5206ed-0595-45ca-831a-0460fc82e62d.webp',
                 'caliber': '12 Gauge',
                 'type': 'Shotgun',
                 'name': 'Remington 870'
+            },
+            'smith': {
+                'image': '../../GUI_Files/38 Smith & Wesson Special Revolver.38 caliber.gif',
+                'bullet': '../../GUI_Files/38_158g_ammo_1200x.webp',
+                'caliber': '.38 cal',
+                'type': 'Revolver',
+                'name': 'Smith & Wesson'
             }
         }
+        
+        # Print debug info about loaded images
+        print("\n=== LOADED FIREARM IMAGES ===")
+        for key, data in self.firearm_images.items():
+            print(f"\n{key.upper()}:")
+            print(f"Image path: {data['image']}")
+            print(f"Bullet path: {data['bullet']}")
+            print(f"Exists: {os.path.exists(data['image'])}, {os.path.exists(data['bullet'])}")
+        print("=== END LOADED IMAGES ===\n")
 
     def analyze_firearm(self):
-        # Get selected firearm type
-        selected_type = self.firearm_type.currentText().lower()
-        
-        # Randomly determine if this is a correct match (70% chance of correct)
-        is_correct_match = random.random() < 0.7
-        
-        if is_correct_match:
-            # Use the selected firearm's images
-            firearm_data = self.firearm_images[selected_type]
-        else:
-            # Pick a random different firearm
-            other_types = [t for t in self.firearm_images.keys() if t != selected_type]
-            random_type = random.choice(other_types)
-            firearm_data = self.firearm_images[random_type]
-        
-        # Load and display images
-        if os.path.exists(firearm_data['image']):
-            pixmap = QPixmap(firearm_data['image'])
-            # Scale image to fit while maintaining aspect ratio
-            scaled_pixmap = pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.firearm_image.setPixmap(scaled_pixmap)
-        else:
-            self.firearm_image.setText("Image not found")
+        if not self.current_file:
+            return
             
-        if os.path.exists(firearm_data['bullet']):
-            pixmap = QPixmap(firearm_data['bullet'])
-            # Scale image to fit while maintaining aspect ratio
-            scaled_pixmap = pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.bullet_image.setPixmap(scaled_pixmap)
-        else:
-            self.bullet_image.setText("Image not found")
-        
-        # Update info with confidence level
-        confidence = random.uniform(85.0, 98.0) if is_correct_match else random.uniform(45.0, 65.0)
-        self.firearm_info.setText(
-            f"<b>Firearm:</b> {firearm_data['name']}<br>"
-            f"<b>Caliber:</b> {firearm_data['caliber']}<br>"
-            f"<b>Type:</b> {firearm_data['type']}<br>"
-            f"<b>Distance:</b> {self.distance_input.text()}m<br>"
-            f"<b>Environment:</b> {self.environment.currentText()}<br>"
-            f"<b>Confidence:</b> {confidence:.1f}%"
+        # Show processing popup
+        self.process_with_popup(
+            self._analyze_firearm_task,
+            "Analyzing firearm...",
+            self.current_file
         )
-        
-        # Return the analysis result
-        return {
-            'is_correct': is_correct_match,
-            'confidence': confidence,
-            'detected_firearm': firearm_data['name'],
-            'detected_caliber': firearm_data['caliber'],
-            'detected_type': firearm_data['type']
-        }
+
+    def _analyze_firearm_task(self, file_path):
+        try:
+            print("\n=== FIREARM ANALYSIS DEBUG ===")
+            # Use the processing module to get actual firearm analysis
+            from processing import categorize_firearm
+            result = categorize_firearm(file_path)
+            
+            if result is None:
+                print("Error: No result returned from categorize_firearm")
+                return None
+                
+            print(f"Analysis result: {result}")
+            
+            # Get the firearm type from the result
+            firearm_type = result['firearm'].lower()
+            print(f"Looking for firearm type: {firearm_type}")
+            
+            # Find matching firearm data
+            firearm_data = None
+            for key, data in self.firearm_images.items():
+                # Check if the firearm type contains any of our keys or vice versa
+                if key in firearm_type or firearm_type in key or \
+                   data['name'].lower() in firearm_type or firearm_type in data['name'].lower():
+                    firearm_data = data
+                    print(f"Found matching firearm data: {data}")
+                    break
+            
+            if firearm_data is None:
+                print("Warning: No matching firearm data found, using default")
+                firearm_data = self.firearm_images['glock']  # Default to Glock if no match
+            
+            # Return the data to be processed in the main thread
+            return {
+                'label': result['firearm'],
+                'confidence': result['match_confidence'] / 100.0,  # Convert percentage to decimal
+                'firearm_data': firearm_data
+            }
+        except Exception as e:
+            print(f"\n=== ERROR IN FIREARM ANALYSIS ===")
+            print(f"Error details: {str(e)}")
+            print("=== END ERROR ===\n")
+            return None
 
 def dummy_locate_gunshots(audio_file):
     # Dummy function that returns 3 evenly spaced gunshots

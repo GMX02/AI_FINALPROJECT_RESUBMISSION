@@ -59,14 +59,27 @@ def locate_gunshots(file_path):
         # Convert timestamps to the expected format with metadata
         gunshots = []
         for t in timestamps:
+            # Create a temporary audio segment for this gunshot
+            y, sr = librosa.load(file_path, sr=None, offset=t-0.1, duration=0.2)
+            temp_file = f"temp_gunshot_{t}.wav"
+            import soundfile as sf
+            sf.write(temp_file, y, sr)
+            
+            # Categorize the firearm
+            firearm_info = categorize_firearm(temp_file)
+            
+            # Clean up temporary file
+            os.remove(temp_file)
+            
             gunshots.append({
                 'time': t,
                 'confidence': 0.95,  # High confidence for detected spikes
-                'type': 'Unknown',  # Type will be determined by categorization
-                'caliber': 'Unknown',  # Caliber will be determined by categorization
+                'type': firearm_info['firearm'],
+                'caliber': firearm_info['caliber'],
                 'energy': 'Unknown',  # Energy will be calculated in future
                 'peak_pressure': 'Unknown',  # Pressure will be calculated in future
-                'frequency': 'Unknown'  # Frequency will be calculated in future
+                'frequency': 'Unknown',  # Frequency will be calculated in future
+                'match_confidence': firearm_info['match_confidence']
             })
         
         print(f"Returning {len(gunshots)} gunshot markers")
@@ -75,11 +88,115 @@ def locate_gunshots(file_path):
         print(f"Error locating gunshots: {e}")
         return []
 
-# Dummy firearm categorization based on audio file
+# Categorize firearm based on audio characteristics
 def categorize_firearm(file_path):
-    # Keep the dummy implementation for now
-    return {
-        'firearm': 'Glock 17',
-        'caliber': '9mm',
-        'match_confidence': 78.9
-    }
+    try:
+        print("\n=== FIREARM CLASSIFICATION DEBUG ===")
+        print(f"Attempting to load models from: ../../models/")
+        
+        # Load the firearm classification model
+        from tensorflow.keras.models import load_model
+        import pickle
+        
+        # Load firearm model and encoder
+        print("Loading firearm model...")
+        firearm_model = load_model('../../models/firearm_model.h5')
+        print("Loading firearm encoder...")
+        with open('../../models/firearm_encoder.pkl', 'rb') as f:
+            firearm_encoder = pickle.load(f)
+        
+        # Load caliber model and encoder
+        print("Loading caliber model...")
+        caliber_model = load_model('../../models/caliber_model.h5')
+        print("Loading caliber encoder...")
+        with open('../../models/caliber_encoder.pkl', 'rb') as f:
+            caliber_encoder = pickle.load(f)
+            
+        print("All models and encoders loaded successfully!")
+        
+        # Extract features EXACTLY as in firearm_classifier.py
+        print("\nExtracting features from audio file...")
+        SAMPLE_RATE = 44100
+        DURATION = 2.0
+        N_MELS = 128
+        HOP_LENGTH = 512
+        N_FFT = 2048
+        
+        # Load and preprocess audio
+        y, sr = librosa.load(file_path, sr=SAMPLE_RATE)
+        if len(y) < SAMPLE_RATE * DURATION:
+            y = np.pad(y, (0, int(SAMPLE_RATE * DURATION) - len(y)))
+        else:
+            y = y[:int(SAMPLE_RATE * DURATION)]
+        
+        # Extract all features
+        features = {}
+        features['mel_spec'] = librosa.power_to_db(librosa.feature.melspectrogram(
+            y=y, sr=sr, n_mels=N_MELS, hop_length=HOP_LENGTH, n_fft=N_FFT
+        ))
+        features['mfcc'] = librosa.feature.mfcc(
+            y=y, sr=sr, n_mfcc=20, n_mels=N_MELS, hop_length=HOP_LENGTH
+        )
+        features['chroma'] = librosa.feature.chroma_stft(
+            y=y, sr=sr, hop_length=HOP_LENGTH
+        )
+        features['contrast'] = librosa.feature.spectral_contrast(
+            y=y, sr=sr, hop_length=HOP_LENGTH
+        )
+        features['zcr'] = librosa.feature.zero_crossing_rate(y)
+        features['rms'] = librosa.feature.rms(y=y)
+        
+        # Combine features exactly as in training
+        X = np.concatenate([
+            features['mel_spec'].flatten(),
+            features['mfcc'].flatten(),
+            features['chroma'].flatten(),
+            features['contrast'].flatten(),
+            features['zcr'].flatten(),
+            features['rms'].flatten()
+        ])
+        
+        # Normalize
+        X = (X - X.mean()) / X.std()
+        
+        # Reshape for model input
+        X = X.reshape(1, X.shape[0], 1)
+        
+        print(f"Input shape: {X.shape}")
+        
+        # Predict firearm type
+        print("\nMaking firearm predictions...")
+        firearm_pred = firearm_model.predict(X)
+        firearm_idx = np.argmax(firearm_pred[0])
+        firearm_type = firearm_encoder.inverse_transform([firearm_idx])[0]
+        firearm_confidence = float(np.max(firearm_pred[0]) * 100)
+        print(f"Firearm prediction probabilities: {firearm_pred[0]}")
+        print(f"Selected firearm: {firearm_type} (index: {firearm_idx})")
+        print(f"Firearm confidence: {firearm_confidence:.2f}%")
+        
+        # Predict caliber
+        print("\nMaking caliber predictions...")
+        caliber_pred = caliber_model.predict(X)
+        caliber_idx = np.argmax(caliber_pred[0])
+        caliber = caliber_encoder.inverse_transform([caliber_idx])[0]
+        caliber_confidence = float(np.max(caliber_pred[0]) * 100)
+        print(f"Caliber prediction probabilities: {caliber_pred[0]}")
+        print(f"Selected caliber: {caliber} (index: {caliber_idx})")
+        print(f"Caliber confidence: {caliber_confidence:.2f}%")
+        
+        print("=== END DEBUG ===\n")
+        
+        return {
+            'firearm': firearm_type,
+            'caliber': caliber,
+            'match_confidence': firearm_confidence
+        }
+    except Exception as e:
+        print(f"\n=== ERROR IN FIREARM CLASSIFICATION ===")
+        print(f"Error details: {str(e)}")
+        print("=== END ERROR ===\n")
+        return {
+            'firearm': 'Error',
+            'caliber': 'N/A',
+            'match_confidence': 0.0
+        }
