@@ -1187,57 +1187,58 @@ class GunshotDetectionApp(QMainWindow):
         print("=== END LOADED IMAGES ===\n")
 
     def analyze_firearm(self):
-        # Get selected firearm type
-        selected_type = self.firearm_type.currentText().lower()
-        
-        # Randomly determine if this is a correct match (70% chance of correct)
-        is_correct_match = random.random() < 0.7
-        
-        if is_correct_match:
-            # Use the selected firearm's images
-            firearm_data = self.firearm_images[selected_type]
-        else:
-            # Pick a random different firearm
-            other_types = [t for t in self.firearm_images.keys() if t != selected_type]
-            random_type = random.choice(other_types)
-            firearm_data = self.firearm_images[random_type]
-        
-        # Load and display images
-        if os.path.exists(firearm_data['image']):
-            pixmap = QPixmap(firearm_data['image'])
-            # Scale image to fit while maintaining aspect ratio
-            scaled_pixmap = pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.firearm_image.setPixmap(scaled_pixmap)
-        else:
-            self.firearm_image.setText("Image not found")
+        if not self.current_file:
+            return
             
-        if os.path.exists(firearm_data['bullet']):
-            pixmap = QPixmap(firearm_data['bullet'])
-            # Scale image to fit while maintaining aspect ratio
-            scaled_pixmap = pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.bullet_image.setPixmap(scaled_pixmap)
-        else:
-            self.bullet_image.setText("Image not found")
-        
-        # Update info with confidence level
-        confidence = random.uniform(85.0, 98.0) if is_correct_match else random.uniform(45.0, 65.0)
-        self.firearm_info.setText(
-            f"<b>Firearm:</b> {firearm_data['name']}<br>"
-            f"<b>Caliber:</b> {firearm_data['caliber']}<br>"
-            f"<b>Type:</b> {firearm_data['type']}<br>"
-            f"<b>Distance:</b> {self.distance_input.text()}m<br>"
-            f"<b>Environment:</b> {self.environment.currentText()}<br>"
-            f"<b>Confidence:</b> {confidence:.1f}%"
+        # Show processing popup
+        self.process_with_popup(
+            self._analyze_firearm_task,
+            "Analyzing firearm...",
+            self.current_file
         )
-        
-        # Return the analysis result
-        return {
-            'is_correct': is_correct_match,
-            'confidence': confidence,
-            'detected_firearm': firearm_data['name'],
-            'detected_caliber': firearm_data['caliber'],
-            'detected_type': firearm_data['type']
-        }
+
+    def _analyze_firearm_task(self, file_path):
+        try:
+            print("\n=== FIREARM ANALYSIS DEBUG ===")
+            # Use the processing module to get actual firearm analysis
+            from processing import categorize_firearm
+            result = categorize_firearm(file_path)
+            
+            if result is None:
+                print("Error: No result returned from categorize_firearm")
+                return None
+                
+            print(f"Analysis result: {result}")
+            
+            # Get the firearm type from the result
+            firearm_type = result['firearm'].lower()
+            print(f"Looking for firearm type: {firearm_type}")
+            
+            # Find matching firearm data
+            firearm_data = None
+            for key, data in self.firearm_images.items():
+                # Check if the firearm type contains any of our keys or vice versa
+                if key in firearm_type or firearm_type in key or \
+                   data['name'].lower() in firearm_type or firearm_type in data['name'].lower():
+                    firearm_data = data
+                    print(f"Found matching firearm data: {data}")
+                    break
+            
+            if firearm_data is None:
+                print("Warning: No matching firearm data found, using default")
+                firearm_data = self.firearm_images['glock']  # Default to Glock if no match
+            
+            # Return the data to be processed in the main thread
+            return {
+                'label': result['firearm'],
+                'confidence': result['match_confidence'] / 100.0,  # Convert percentage to decimal
+                'firearm_data': firearm_data
+            }
+        except Exception as e:
+            print(f"\n=== ERROR IN FIREARM ANALYSIS ===")
+            print(f"Error details: {str(e)}")
+            print("=== END ERROR ===\n")
+            return None
 
 def dummy_locate_gunshots(audio_file):
     # Dummy function that returns 3 evenly spaced gunshots
