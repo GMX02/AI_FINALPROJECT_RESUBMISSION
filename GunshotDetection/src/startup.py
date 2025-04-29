@@ -4,6 +4,21 @@ from PyQt5.QtWidgets import QApplication, QSplashScreen, QLabel, QVBoxLayout, QW
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QPen
 from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QRect
 from main_gui import GunshotDetectionApp
+import os
+import subprocess
+import shutil
+from pathlib import Path
+import tensorflow as tf
+import numpy as np
+import librosa
+import soundfile as sf
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
+import pickle
 
 # Widget that displays a rotating loading spinner
 class LoadingSpinner(QWidget):
@@ -142,9 +157,258 @@ class SplashScreen(QWidget):
         painter.setBrush(QColor(43, 43, 43, 230))  # Semi-transparent dark background
         painter.drawRoundedRect(self.rect(), 10, 10)
 
+def check_directory_structure():
+    """Check if the required directory structure exists, create if not"""
+    required_dirs = [
+        '../models',
+        '../data/raw',
+        '../data/processed',
+        '../data/splits',
+        '../reports'
+    ]
+    
+    for dir_path in required_dirs:
+        os.makedirs(dir_path, exist_ok=True)
+        print(f"Checked/created directory: {dir_path}")
 
-# Main application entry point
+def check_models():
+    """Check if all required models exist"""
+    required_models = [
+        '../../models/firearm_model.h5',
+        '../../models/caliber_model.h5',
+        '../../models/firearm_encoder.pkl',
+        '../../models/caliber_encoder.pkl'
+    ]
+    
+    missing_models = [model for model in required_models if not os.path.exists(model)]
+    return missing_models
+
+def check_data():
+    """Check if required data exists"""
+    required_data = [
+        '../../GUI_Files/Glock 17Semi-automatic pistol9mm caliber.gif',
+        '../../GUI_Files/REMINGTON.gif',
+        '../../GUI_Files/38 Smith & Wesson Special Revolver.38 caliber.gif',
+        '../../GUI_Files/Everest-9mm-Ammo-8.jpg',
+        '../../GUI_Files/elite-556-65-sbt-Edit__49747.jpg',
+        '../../GUI_Files/red-shells_2d5206ed-0595-45ca-831a-0460fc82e62d.webp',
+        '../../GUI_Files/38_158g_ammo_1200x.webp'
+    ]
+    
+    missing_data = [data for data in required_data if not os.path.exists(data)]
+    return missing_data
+
+def download_data():
+    """Run the data download script"""
+    print("Downloading required data...")
+    try:
+        subprocess.run(['python', 'download_data.py'], check=True)
+        print("Data download completed successfully")
+    except subprocess.CalledProcessError as e:
+        print(f"Error downloading data: {e}")
+        sys.exit(1)
+
+def extract_features(audio_path, n_mels=128, n_fft=2048, hop_length=512):
+    """Extract mel spectrogram features from audio file"""
+    try:
+        y, sr = librosa.load(audio_path, sr=None)
+        mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=n_mels, 
+                                                n_fft=n_fft, hop_length=hop_length)
+        mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+        return mel_spec_db
+    except Exception as e:
+        print(f"Error processing {audio_path}: {e}")
+        return None
+
+def create_firearm_model(input_shape, num_classes):
+    """Create and compile the firearm classification model"""
+    model = Sequential([
+        Conv2D(32, (3, 3), activation='relu', input_shape=input_shape),
+        MaxPooling2D((2, 2)),
+        Conv2D(64, (3, 3), activation='relu'),
+        MaxPooling2D((2, 2)),
+        Conv2D(128, (3, 3), activation='relu'),
+        MaxPooling2D((2, 2)),
+        Flatten(),
+        Dense(128, activation='relu'),
+        Dropout(0.5),
+        Dense(num_classes, activation='softmax')
+    ])
+    
+    model.compile(optimizer='adam',
+                 loss='categorical_crossentropy',
+                 metrics=['accuracy'])
+    
+    return model
+
+def create_caliber_model(input_shape, num_classes):
+    """Create and compile the caliber classification model"""
+    model = Sequential([
+        Conv2D(32, (3, 3), activation='relu', input_shape=input_shape),
+        MaxPooling2D((2, 2)),
+        Conv2D(64, (3, 3), activation='relu'),
+        MaxPooling2D((2, 2)),
+        Flatten(),
+        Dense(64, activation='relu'),
+        Dropout(0.5),
+        Dense(num_classes, activation='softmax')
+    ])
+    
+    model.compile(optimizer='adam',
+                 loss='categorical_crossentropy',
+                 metrics=['accuracy'])
+    
+    return model
+
+def train_models():
+    """Train both firearm and caliber models"""
+    print("Preparing data for training...")
+    
+    # Load and preprocess data
+    X = []
+    y_firearm = []
+    y_caliber = []
+    
+    firearm_types = ['glock', 'ruger', 'remington', 'smith']
+    caliber_types = ['9mm', '5.56mm', '12 Gauge', '.38 cal']
+    
+    for firearm_type in firearm_types:
+        data_dir = f'../data/raw/{firearm_type}'
+        if not os.path.exists(data_dir):
+            continue
+            
+        for file in os.listdir(data_dir):
+            if file.endswith('.wav'):
+                features = extract_features(os.path.join(data_dir, file))
+                if features is not None:
+                    X.append(features)
+                    y_firearm.append(firearm_type)
+                    # Map firearm to caliber
+                    caliber_map = {
+                        'glock': '9mm',
+                        'ruger': '5.56mm',
+                        'remington': '12 Gauge',
+                        'smith': '.38 cal'
+                    }
+                    y_caliber.append(caliber_map[firearm_type])
+    
+    if not X:
+        print("No data available for training")
+        return False
+    
+    # Convert to numpy arrays
+    X = np.array(X)
+    X = X.reshape(X.shape + (1,))  # Add channel dimension
+    
+    # Create encoders
+    from sklearn.preprocessing import LabelEncoder
+    
+    # Firearm encoder
+    firearm_encoder = LabelEncoder()
+    y_firearm_encoded = firearm_encoder.fit_transform(y_firearm)
+    y_firearm_onehot = to_categorical(y_firearm_encoded)
+    
+    # Caliber encoder
+    caliber_encoder = LabelEncoder()
+    y_caliber_encoded = caliber_encoder.fit_transform(y_caliber)
+    y_caliber_onehot = to_categorical(y_caliber_encoded)
+    
+    # Split data
+    X_train, X_test, y_firearm_train, y_firearm_test = train_test_split(
+        X, y_firearm_onehot, test_size=0.2, random_state=42
+    )
+    
+    _, _, y_caliber_train, y_caliber_test = train_test_split(
+        X, y_caliber_onehot, test_size=0.2, random_state=42
+    )
+    
+    # Train firearm model
+    print("Training firearm model...")
+    firearm_model = create_firearm_model(X_train.shape[1:], len(firearm_types))
+    firearm_checkpoint = ModelCheckpoint(
+        '../models/firearm_model.h5',
+        monitor='val_accuracy',
+        save_best_only=True,
+        mode='max'
+    )
+    firearm_early_stopping = EarlyStopping(
+        monitor='val_loss',
+        patience=5,
+        restore_best_weights=True
+    )
+    
+    firearm_model.fit(
+        X_train, y_firearm_train,
+        validation_data=(X_test, y_firearm_test),
+        epochs=50,
+        batch_size=32,
+        callbacks=[firearm_checkpoint, firearm_early_stopping]
+    )
+    
+    # Train caliber model
+    print("Training caliber model...")
+    caliber_model = create_caliber_model(X_train.shape[1:], len(caliber_types))
+    caliber_checkpoint = ModelCheckpoint(
+        '../models/caliber_model.h5',
+        monitor='val_accuracy',
+        save_best_only=True,
+        mode='max'
+    )
+    caliber_early_stopping = EarlyStopping(
+        monitor='val_loss',
+        patience=5,
+        restore_best_weights=True
+    )
+    
+    caliber_model.fit(
+        X_train, y_caliber_train,
+        validation_data=(X_test, y_caliber_test),
+        epochs=50,
+        batch_size=32,
+        callbacks=[caliber_checkpoint, caliber_early_stopping]
+    )
+    
+    # Save encoders
+    with open('../models/firearm_encoder.pkl', 'wb') as f:
+        pickle.dump(firearm_encoder, f)
+    
+    with open('../models/caliber_encoder.pkl', 'wb') as f:
+        pickle.dump(caliber_encoder, f)
+    
+    print("Model training completed successfully")
+    return True
+
 def main():
+    """Main startup function"""
+    print("Starting system initialization...")
+    
+    # Check directory structure
+    check_directory_structure()
+    
+    # Check for missing models
+    missing_models = check_models()
+    
+    # Check for missing data
+    missing_data = check_data()
+    
+    if missing_data:
+        print("Error: Missing required data files:")
+        for data in missing_data:
+            print(f"- {data}")
+        print("Please ensure all required data files are present in the GUI_Files directory")
+        sys.exit(1)
+    
+    if missing_models:
+        print("Error: Missing required model files:")
+        for model in missing_models:
+            print(f"- {model}")
+        print("Please ensure all required model files are present in the models directory")
+        sys.exit(1)
+    
+    print("System initialization completed successfully")
+    print("All required models and data are present")
+    
+    # Initialize Qt application
     app = QApplication(sys.argv)
     
     # Show splash screen
@@ -164,5 +428,5 @@ def main():
     # Start the application event loop
     sys.exit(app.exec_())
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main() 
