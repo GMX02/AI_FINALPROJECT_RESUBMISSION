@@ -10,8 +10,10 @@ UrbanSound8K.tar.gzlwml8458.part
 # Ignore extraction artifacts if any
 __MACOSX/
 
-
-
+env/
+models/
+model_backups/
+*.h5
 
 
 
